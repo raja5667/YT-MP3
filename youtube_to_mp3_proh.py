@@ -23,7 +23,7 @@ from PyQt6.QtGui import QPainter, QBrush, QColor, QPalette, QLinearGradient
 from PyQt6.QtWidgets import QWidget, QLabel, QStyle
 
 # ---------------------- Configuration ----------------------
-DEFAULT_OUTPUT_DIR = Path(r"D:\Users\Raja1\Downloads")
+DEFAULT_OUTPUT_DIR = Path.home() / "Downloads"
 BITRATE_KBPS = 320
 FFMPEG_CMD = "ffmpeg"
 # Note: ICON_PATH is likely a placeholder path that doesn't exist on all systems.
