@@ -1,15 +1,3 @@
-#!/usr/bin/env python3
-"""
-youtube_to_mp3_proh_staticdots.py - Fixed and Optimized Version.
-
-Changes:
-1. Replaced the inefficient QTimer-based neon border sweep with a custom 
-   NeonFrame widget using QPropertyAnimation on a custom 'border_offset' property
-   and a QPainter for efficient rendering.
-2. Made OUTPUT_DIR an instance attribute of AppWindow.
-3. Cleaned up the build_ui to fix gradient flow animation logic.
-"""
-
 import os
 import sys
 import shutil
@@ -24,6 +12,8 @@ from PyQt6.QtWidgets import QWidget, QLabel, QStyle
 
 # ---------------------- Configuration ----------------------
 DEFAULT_OUTPUT_DIR = Path.home() / "Downloads"
+# Create folder if missing
+DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 BITRATE_KBPS = 320
 FFMPEG_CMD = "ffmpeg"
 # Note: ICON_PATH is likely a placeholder path that doesn't exist on all systems.
