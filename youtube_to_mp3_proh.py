@@ -19,14 +19,18 @@ DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 BITRATE_KBPS = 320
 FFMPEG_CMD = "ffmpeg"
 ICON_PATH = "/mnt/data/Gemini_Generated_Image_efbieefbieefbiee.jpg"
+# Added this constant back for completeness, even if the cropping PostProcessor is removed
+SQUARE_THUMBNAIL_SIZE = 500 
 
 # ==========================
 # UTILITY FUNCTIONS
 # ==========================
 def check_ffmpeg() -> bool:
+    """Check if FFmpeg is installed and accessible in the system's PATH."""
     return shutil.which(FFMPEG_CMD) is not None
 
 def safe_mkdir(p: Path):
+    """Safely create a directory."""
     try:
         p.mkdir(parents=True, exist_ok=True)
     except Exception:
@@ -45,6 +49,7 @@ def check_internet(timeout=3) -> bool:
 # NEON FRAME WIDGET
 # ==========================
 class NeonFrame(QtWidgets.QFrame):
+    """Custom QFrame with an animating, gradient border."""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedSize(770, 54)
@@ -53,6 +58,7 @@ class NeonFrame(QtWidgets.QFrame):
         self.setFrameShape(QtWidgets.QFrame.Shape.Box)
         self.setFrameShadow(QtWidgets.QFrame.Shadow.Plain)
         self.setStyleSheet("border-radius: 27px; background: transparent;")
+        
         self._border_offset = 0.0
         self.border_anim = QPropertyAnimation(self, b"border_offset")
         self.border_anim.setDuration(3000)
@@ -73,6 +79,7 @@ class NeonFrame(QtWidgets.QFrame):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
         bg_rect = self.rect().adjusted(1, 1, -1, -1)
         bg_color = QColor(255, 255, 255, int(255 * 0.02))
         painter.setPen(Qt.PenStyle.NoPen)
@@ -91,6 +98,7 @@ class NeonFrame(QtWidgets.QFrame):
             stop_pos = stops[i]
             color = stops[i+1]
             gradient.setColorAt(stop_pos, color)
+            
         pen = QtGui.QPen()
         pen.setWidth(3)
         pen.setBrush(gradient)
@@ -142,39 +150,44 @@ class DownloadWorker(QtCore.QThread):
                 self.error.emit(f"An error occurred: {e}\n\n{tb}")
 
         finally:
-            
+            # Clean up on completion or error
             self.cleanup_partial_files(self.output_dir)
 
     def stop(self):
-        """Stop download immediately using new yt-dlp API."""
+        """Stop download immediately using new yt-dlp API and manually clean up."""
         self._stop = True
-    
+        
+        # Attempt to interrupt yt-dlp's network operations (may or may not work immediately)
         try:
             if self._ydl:
                 try:
+                    # This trick attempts to interrupt network threads
                     s = self._ydl.urlopen("http://0.0.0.0/")
                     s.close()
                 except:
                     pass
         except:
             pass
-    
+        
+        # Perform cleanup immediately on stop request
         self.cleanup_partial_files(self.output_dir)
 
     def cleanup_partial_files(self, folder):
+        """Removes all temporary and partial files, including leftover thumbnails."""
         try:
             for f in os.listdir(folder):
                 file_path = os.path.join(folder, f)
 
-                # yt-dlp temp files
-                if f.endswith((".part", ".ytdl", ".temp", ".tmp")):
+                # yt-dlp temp files and video/audio streams
+                if f.endswith((".part", ".ytdl", ".temp", ".tmp", ".webm", ".mp4", ".m4a", ".wav")):
                     os.remove(file_path)
-
-                # raw streams
-                elif f.endswith((".webm", ".mp4", ".m4a", ".wav")):
+                
+                # --- NEW: Explicitly remove downloaded thumbnail files ---
+                elif f.endswith((".webp", ".jpg", ".jpeg", ".png")):
                     os.remove(file_path)
+                # --------------------------------------------------------
 
-                # incomplete mp3
+                # incomplete mp3 (small files that failed conversion/embedding)
                 elif f.endswith(".mp3"):
                     if os.path.getsize(file_path) < 200 * 1024:  # <200 KB
                         os.remove(file_path)
@@ -184,46 +197,52 @@ class DownloadWorker(QtCore.QThread):
 
     def _make_opts(self, output_dir):
         outtmpl = os.path.join(output_dir, "%(title)s.%(ext)s")
-
         def hook(d):
             if self._stop:
-                raise Exception("STOP")
-
+                raise Exception("Download cancelled by user.")
             status = d.get("status")
             if status == "downloading":
                 downloaded = d.get("downloaded_bytes", 0) or 0
                 total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
-                pct = (downloaded / total * 100) if total else 0
-                self.progress.emit(pct)
-
+                pct = (downloaded / total * 100) if total else 0.0
+                try:
+                    pct_val = max(0.0, min(100.0, float(pct)))
+                except Exception:
+                    pct_val = 0.0
+                self.progress.emit(pct_val)
                 filename = d.get("filename") or ""
                 short = os.path.basename(filename)
-                self.status.emit(f"Downloading: {pct:5.1f}% — {short}")
-
+                self.status.emit(f"Downloading: {pct_val:5.1f}% — {short}")
             elif status == "finished":
-                self.status.emit("Converting to MP3...")
-
+                self.status.emit("Converting/Embedding...")
+        
         opts = {
             "format": "bestaudio/best",
             "outtmpl": outtmpl,
+            "noplaylist": False,
             "quiet": True,
             "no_warnings": True,
             "progress_hooks": [hook],
-            "writethumbnail": False,
-            "embed_thumbnail": False,
-            "keepvideo": False,
+            
+            # --- START: Options for Thumbnail Embedding ---
+            "writethumbnail": True,  # 1. Download the thumbnail
+            "embed_thumbnail": True, # 2. Indicate that we want to embed the thumbnail
+            "keepvideo": False,      # Remove temporary video/audio files
+            # --- END: Options for Thumbnail Embedding ---
+            
             "postprocessors": [
                 {
                     "key": "FFmpegExtractAudio",
                     "preferredcodec": "mp3",
                     "preferredquality": str(BITRATE_KBPS),
                 },
+                {
+                    "key": "EmbedThumbnail", # 3. The postprocessor that does the embedding
+                },
             ],
-            "continuedl": False,
-            "ignoreerrors": True,
-            "retries": 1,
+            "retries": 3,
+            "continuedl": True,
         }
-
         return opts
 
 # ==========================
@@ -232,14 +251,16 @@ class DownloadWorker(QtCore.QThread):
 class AppWindow(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("YouTubeToMP3 Pro H (Static Dots)")
+        self.setWindowTitle("YouTubeToMP3 Pro H (Fixed Cleanup)")
         self.setFixedSize(850, 500)
         self.setStyleSheet("background-color: #202124;")
+        
         try:
             if os.path.exists(ICON_PATH):
                 self.setWindowIcon(QtGui.QIcon(ICON_PATH))
         except:
             pass
+            
         self.output_dir = DEFAULT_OUTPUT_DIR
         safe_mkdir(self.output_dir)
         self.worker = None
@@ -254,6 +275,7 @@ class AppWindow(QtWidgets.QWidget):
         outer.setContentsMargins(40, 20, 40, 20)
         outer.setSpacing(12)
         outer.setAlignment(Qt.AlignmentFlag.AlignTop)
+        
         title = QLabel(
             "<span style='font-size:40px; font-weight:600; letter-spacing:6px;'>"
             "<span style='color:#4285F4'>Y</span>"
@@ -344,7 +366,6 @@ class AppWindow(QtWidgets.QWidget):
                 );
             }
         """)
-
         self.btn_download.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_download.clicked.connect(self.start_download)
         btn_row.addWidget(self.btn_download)
@@ -371,7 +392,6 @@ class AppWindow(QtWidgets.QWidget):
                 color:#0F9D58;
             }
         """)
-
         self.btn_cancel.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_cancel.setEnabled(False)
         self.btn_cancel.clicked.connect(self.cancel_download)
@@ -447,7 +467,8 @@ class AppWindow(QtWidgets.QWidget):
         if self.worker and self.worker.isRunning():
             try:
                 self.worker.stop()
-                self.worker.wait(1200)
+                # Wait briefly for the cleanup to potentially finish
+                self.worker.wait(500) 
             except:
                 pass
         self.lbl_status.setText("Cancelled")
