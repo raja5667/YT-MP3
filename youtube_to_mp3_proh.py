@@ -4,18 +4,25 @@ import shutil
 import traceback
 from pathlib import Path
 from yt_dlp import YoutubeDL
+import socket
 
 from PyQt6 import QtCore, QtGui, QtWidgets
-from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QRect, QLineF, QObject, pyqtProperty
-from PyQt6.QtGui import QPainter, QBrush, QColor, QPalette, QLinearGradient
-from PyQt6.QtWidgets import QWidget, QLabel, QStyle
+from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, pyqtProperty
+from PyQt6.QtGui import QPainter, QBrush, QColor, QLinearGradient
+from PyQt6.QtWidgets import QLabel
 
+# ==========================
+# CONFIG & CONSTANTS
+# ==========================
 DEFAULT_OUTPUT_DIR = Path.home() / "Downloads"
 DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 BITRATE_KBPS = 320
 FFMPEG_CMD = "ffmpeg"
 ICON_PATH = "/mnt/data/Gemini_Generated_Image_efbieefbieefbiee.jpg"
 
+# ==========================
+# UTILITY FUNCTIONS
+# ==========================
 def check_ffmpeg() -> bool:
     return shutil.which(FFMPEG_CMD) is not None
 
@@ -25,6 +32,18 @@ def safe_mkdir(p: Path):
     except Exception:
         pass
 
+def check_internet(timeout=3) -> bool:
+    """Return True if online, False if offline."""
+    try:
+        socket.setdefaulttimeout(timeout)
+        socket.create_connection(("8.8.8.8", 53))  # Google DNS
+        return True
+    except OSError:
+        return False
+
+# ==========================
+# NEON FRAME WIDGET
+# ==========================
 class NeonFrame(QtWidgets.QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -59,6 +78,7 @@ class NeonFrame(QtWidgets.QFrame):
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QBrush(bg_color))
         painter.drawRoundedRect(bg_rect, 27, 27)
+
         offset = self._border_offset
         stops = [
             (0.0 + offset) % 1.0, QColor("#4285F4"),
@@ -80,6 +100,9 @@ class NeonFrame(QtWidgets.QFrame):
         painter.drawRoundedRect(border_rect, 27, 27)
         painter.end()
 
+# ==========================
+# DOWNLOAD WORKER THREAD
+# ==========================
 class DownloadWorker(QtCore.QThread):
     progress = QtCore.pyqtSignal(float)
     status = QtCore.pyqtSignal(str)
@@ -127,7 +150,8 @@ class DownloadWorker(QtCore.QThread):
                 short = os.path.basename(filename)
                 self.status.emit(f"Downloading: {pct_val:5.1f}% — {short}")
             elif status == "finished":
-                self.status.emit("Converting to MP3...")
+                self.status.emit("Converting/Embedding...") 
+        
         opts = {
             "format": "bestaudio/best",
             "outtmpl": outtmpl,
@@ -135,16 +159,25 @@ class DownloadWorker(QtCore.QThread):
             "quiet": True,
             "no_warnings": True,
             "progress_hooks": [hook],
-            "postprocessors": [{
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": "mp3",
-                "preferredquality": str(BITRATE_KBPS),
-            }],
+            "writethumbnail": True,  
+            "embed_thumbnail": True,
+            "keepvideo": False,     
+            "postprocessors": [
+                {
+                    "key": "FFmpegExtractAudio",
+                    "preferredcodec": "mp3",
+                    "preferredquality": str(BITRATE_KBPS),
+                },
+                {"key": "EmbedThumbnail"},
+            ],
             "retries": 3,
             "continuedl": True,
         }
         return opts
 
+# ==========================
+# MAIN APP WINDOW
+# ==========================
 class AppWindow(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
@@ -162,13 +195,15 @@ class AppWindow(QtWidgets.QWidget):
         self._build_ui()
         self.setAcceptDrops(True)
 
+    # ------------------------
+    # BUILD UI
+    # ------------------------
     def _build_ui(self):
         outer = QtWidgets.QVBoxLayout(self)
         outer.setContentsMargins(40, 20, 40, 20)
         outer.setSpacing(12)
         outer.setAlignment(Qt.AlignmentFlag.AlignTop)
-        title = QtWidgets.QLabel()
-        title_text = (
+        title = QLabel(
             "<span style='font-size:40px; font-weight:600; letter-spacing:6px;'>"
             "<span style='color:#4285F4'>Y</span>"
             "<span style='color:#EA4335'>O</span>"
@@ -191,10 +226,11 @@ class AppWindow(QtWidgets.QWidget):
             "<span style='color:#FBBC05'>H</span>"
             "</span>"
         )
-        title.setText(title_text)
         title.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         outer.addWidget(title)
         outer.addSpacing(18)
+
+        # Input Frame
         self.input_frame = NeonFrame()
         self.input_line = QtWidgets.QLineEdit()
         self.input_line.setPlaceholderText("Paste YouTube link or drag & drop here…")
@@ -214,11 +250,13 @@ class AppWindow(QtWidgets.QWidget):
         f.addWidget(self.input_line)
         outer.addWidget(self.input_frame)
         outer.addSpacing(6)
+
+        # Download path
         path_row = QtWidgets.QHBoxLayout()
-        lbl_path = QtWidgets.QLabel("Download Path:")
+        lbl_path = QLabel("Download Path:")
         lbl_path.setStyleSheet("color:#BDC1C6; font-size:13px;")
         path_row.addWidget(lbl_path)
-        self.lbl_path_value = QtWidgets.QLabel(str(self.output_dir))
+        self.lbl_path_value = QLabel(str(self.output_dir))
         self.lbl_path_value.setStyleSheet("color:#FFFFFF; font-size:13px;")
         path_row.addWidget(self.lbl_path_value)
         path_row.addStretch()
@@ -233,27 +271,10 @@ class AppWindow(QtWidgets.QWidget):
         self.btn_change.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_change.clicked.connect(self.change_path)
         path_row.addWidget(self.btn_change)
-        dot_widget = QtWidgets.QWidget()
-        dot_widget.setFixedSize(20, 19)
-        dot_layout = QtWidgets.QGridLayout(dot_widget)
-        dot_layout.setContentsMargins(0,0,0,0)
-        dot_layout.setSpacing(0)
-        dot_style = "font-size:7px; margin:0; padding:0;"
-        dot1 = QLabel("⬤")
-        dot1.setStyleSheet(f"color:#EA4335; {dot_style}")
-        dot1.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        dot_layout.addWidget(dot1, 0, 1)
-        dot2 = QLabel("⬤")
-        dot2.setStyleSheet(f"color:#34A853; {dot_style}")
-        dot2.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        dot_layout.addWidget(dot2, 1, 0)
-        dot3 = QLabel("⬤")
-        dot3.setStyleSheet(f"color:#FBBC05; {dot_style}")
-        dot3.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        dot_layout.addWidget(dot3, 2, 1)
-        path_row.addWidget(dot_widget)
         outer.addLayout(path_row)
         outer.addSpacing(20)
+
+        # Buttons
         btn_row = QtWidgets.QHBoxLayout()
         btn_row.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         btn_row.setSpacing(22)
@@ -274,6 +295,7 @@ class AppWindow(QtWidgets.QWidget):
         self.btn_download.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_download.clicked.connect(self.start_download)
         btn_row.addWidget(self.btn_download)
+
         self.btn_cancel = QtWidgets.QPushButton("Cancel")
         self.btn_cancel.setFixedSize(180, 56)
         self.btn_cancel.setStyleSheet("""
@@ -289,10 +311,14 @@ class AppWindow(QtWidgets.QWidget):
         self.btn_cancel.setEnabled(False)
         self.btn_cancel.clicked.connect(self.cancel_download)
         btn_row.addWidget(self.btn_cancel)
+
         outer.addLayout(btn_row)
-        self.lbl_status = QtWidgets.QLabel("Ready")
+
+        # Status & Progress
+        self.lbl_status = QLabel("Ready")
         self.lbl_status.setStyleSheet("color:white; font-size:15px;")
         outer.addWidget(self.lbl_status)
+
         self.progress = QtWidgets.QProgressBar()
         self.progress.setRange(0,100)
         self.progress.setTextVisible(False)
@@ -309,10 +335,13 @@ class AppWindow(QtWidgets.QWidget):
         """)
         outer.addWidget(self.progress)
         outer.addStretch()
-        footer = QtWidgets.QLabel("MP3 - 320kbps • Playlist Support • Drag & Drop Enabled")
+        footer = QLabel("MP3 - 320kbps • Playlist Support • Drag & Drop Enabled")
         footer.setStyleSheet("color:#BDC1C6; font-size:13px;")
         outer.addWidget(footer)
 
+    # ------------------------
+    # BUTTON ACTIONS
+    # ------------------------
     def change_path(self):
         path = QtWidgets.QFileDialog.getExistingDirectory(
             self, "Select download folder", str(self.output_dir)
@@ -325,16 +354,24 @@ class AppWindow(QtWidgets.QWidget):
         if not check_ffmpeg():
             QtWidgets.QMessageBox.critical(self, "FFmpeg Missing", "Install FFmpeg and try again.")
             return
+
+        if not check_internet():
+            QtWidgets.QMessageBox.critical(self, "No Internet", "You are offline! Please check your connection.")
+            self.lbl_status.setText("Offline")
+            return
+
         url = self.input_line.text().strip()
         if not url:
             self.lbl_status.setText("Please paste a YouTube link.")
             return
+
         safe_mkdir(self.output_dir)
         self.worker = DownloadWorker(url, str(self.output_dir))
         self.worker.progress.connect(self._on_progress)
         self.worker.status.connect(self._on_status)
         self.worker.finished.connect(self._on_finished)
         self.worker.error.connect(self._on_error)
+
         self.btn_download.setEnabled(False)
         self.btn_cancel.setEnabled(True)
         self.lbl_status.setText("Queued")
@@ -348,10 +385,16 @@ class AppWindow(QtWidgets.QWidget):
                 self.worker.wait(1200)
             except:
                 pass
-            self.lbl_status.setText("Cancelled")
+        self.lbl_status.setText("Cancelled")
+        self.progress.setValue(0)
+        self.input_line.clear()
         self.btn_download.setEnabled(True)
         self.btn_cancel.setEnabled(False)
+        QtCore.QTimer.singleShot(5000, self.reset_ui)
 
+    # ------------------------
+    # SIGNAL HANDLERS
+    # ------------------------
     def _on_progress(self, pct):
         self.progress.setValue(int(pct))
 
@@ -365,11 +408,6 @@ class AppWindow(QtWidgets.QWidget):
         self.btn_cancel.setEnabled(False)
         QtCore.QTimer.singleShot(10000, self.reset_ui)
 
-    def reset_ui(self):
-        self.input_line.clear()
-        self.progress.setValue(0)
-        self.lbl_status.setText("Ready")
-
     def _on_error(self, err):
         if "Download cancelled by user" not in err:
             QtWidgets.QMessageBox.critical(self, "Error", err)
@@ -377,6 +415,14 @@ class AppWindow(QtWidgets.QWidget):
         self.btn_download.setEnabled(True)
         self.btn_cancel.setEnabled(False)
 
+    def reset_ui(self):
+        self.input_line.clear()
+        self.progress.setValue(0)
+        self.lbl_status.setText("Ready")
+
+    # ------------------------
+    # DRAG & DROP
+    # ------------------------
     def dragEnterEvent(self, e):
         if e.mimeData().hasUrls() or e.mimeData().hasText():
             e.acceptProposedAction()
@@ -388,6 +434,9 @@ class AppWindow(QtWidgets.QWidget):
         elif e.mimeData().hasText():
             self.input_line.setText(e.mimeData().text())
 
+# ==========================
+# MAIN
+# ==========================
 def main():
     app = QtWidgets.QApplication(sys.argv)
     app.setFont(QtGui.QFont("Segoe UI", 10))
