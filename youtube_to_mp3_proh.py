@@ -114,65 +114,116 @@ class DownloadWorker(QtCore.QThread):
         self.url = url
         self.output_dir = output_dir
         self._stop = False
+        self._ydl = None
 
     def run(self):
         try:
             opts = self._make_opts(self.output_dir)
+
             with YoutubeDL(opts) as ydl:
+                self._ydl = ydl
+
                 self.status.emit("Starting download...")
+
+                if self._stop:
+                    self.finished.emit("Cancelled")
+                    return
+
                 ydl.download([self.url])
+
                 if not self._stop:
                     self.finished.emit("Done")
+
         except Exception as e:
-            if not self._stop:
+            if self._stop:
+                self.finished.emit("Cancelled")
+            else:
                 tb = traceback.format_exc()
                 self.error.emit(f"An error occurred: {e}\n\n{tb}")
 
+        finally:
+            
+            self.cleanup_partial_files(self.output_dir)
+
     def stop(self):
+        """Stop download immediately using new yt-dlp API."""
         self._stop = True
+    
+        try:
+            if self._ydl:
+                try:
+                    s = self._ydl.urlopen("http://0.0.0.0/")
+                    s.close()
+                except:
+                    pass
+        except:
+            pass
+    
+        self.cleanup_partial_files(self.output_dir)
+
+    def cleanup_partial_files(self, folder):
+        try:
+            for f in os.listdir(folder):
+                file_path = os.path.join(folder, f)
+
+                # yt-dlp temp files
+                if f.endswith((".part", ".ytdl", ".temp", ".tmp")):
+                    os.remove(file_path)
+
+                # raw streams
+                elif f.endswith((".webm", ".mp4", ".m4a", ".wav")):
+                    os.remove(file_path)
+
+                # incomplete mp3
+                elif f.endswith(".mp3"):
+                    if os.path.getsize(file_path) < 200 * 1024:  # <200 KB
+                        os.remove(file_path)
+
+        except Exception:
+            pass
 
     def _make_opts(self, output_dir):
         outtmpl = os.path.join(output_dir, "%(title)s.%(ext)s")
+
         def hook(d):
             if self._stop:
-                raise Exception("Download cancelled by user.")
+                raise Exception("STOP")
+
             status = d.get("status")
             if status == "downloading":
                 downloaded = d.get("downloaded_bytes", 0) or 0
                 total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
-                pct = (downloaded / total * 100) if total else 0.0
-                try:
-                    pct_val = max(0.0, min(100.0, float(pct)))
-                except Exception:
-                    pct_val = 0.0
-                self.progress.emit(pct_val)
+                pct = (downloaded / total * 100) if total else 0
+                self.progress.emit(pct)
+
                 filename = d.get("filename") or ""
                 short = os.path.basename(filename)
-                self.status.emit(f"Downloading: {pct_val:5.1f}% — {short}")
+                self.status.emit(f"Downloading: {pct:5.1f}% — {short}")
+
             elif status == "finished":
-                self.status.emit("Converting/Embedding...") 
-        
+                self.status.emit("Converting to MP3...")
+
         opts = {
             "format": "bestaudio/best",
             "outtmpl": outtmpl,
-            "noplaylist": False,
             "quiet": True,
             "no_warnings": True,
             "progress_hooks": [hook],
-            "writethumbnail": True,  
-            "embed_thumbnail": True,
-            "keepvideo": False,     
+            "writethumbnail": False,
+            "embed_thumbnail": False,
+            "keepvideo": False,
             "postprocessors": [
                 {
                     "key": "FFmpegExtractAudio",
                     "preferredcodec": "mp3",
                     "preferredquality": str(BITRATE_KBPS),
                 },
-                {"key": "EmbedThumbnail"},
             ],
-            "retries": 3,
-            "continuedl": True,
+            "continuedl": False,
+            "ignoreerrors": True,
+            "retries": 1,
         }
+
         return opts
 
 # ==========================
@@ -282,16 +333,18 @@ class AppWindow(QtWidgets.QWidget):
         self.btn_download.setFixedSize(220, 56)
         self.btn_download.setStyleSheet("""
             QPushButton {
-                font-size:18px; font-weight:600; color:white;
-                border:2px solid white;
+                font-size:18px;
+                border:2px solid transparent;
                 border-radius:28px;
+                padding:10px;
+                color:white;
                 background: qlineargradient(
                     x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #4285F4, stop:0.45 #FF7043,
-                    stop:0.75 #FBBC05, stop:1 #EA4335
+                    stop:0 #4285F4, stop:1 #EA4335
                 );
             }
         """)
+
         self.btn_download.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_download.clicked.connect(self.start_download)
         btn_row.addWidget(self.btn_download)
@@ -300,13 +353,25 @@ class AppWindow(QtWidgets.QWidget):
         self.btn_cancel.setFixedSize(180, 56)
         self.btn_cancel.setStyleSheet("""
             QPushButton {
-                border: 2px solid #4285F4;
-                color:#4285F4;
                 font-size:18px;
+                border:2px solid #4285F4;
+                color:#4285F4;
                 border-radius:28px;
+                padding:10px;
                 background: transparent;
             }
+            QPushButton:hover {
+                background: rgba(66,133,244,40%);
+                border:2px solid #34A853;
+                color:#34A853;
+            }
+            QPushButton:pressed {
+                background: rgba(52,168,83,60%);
+                border:2px solid #0F9D58;
+                color:#0F9D58;
+            }
         """)
+
         self.btn_cancel.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_cancel.setEnabled(False)
         self.btn_cancel.clicked.connect(self.cancel_download)
