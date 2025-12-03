@@ -18,7 +18,7 @@ DEFAULT_OUTPUT_DIR = Path.home() / "Downloads"
 DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 BITRATE_KBPS = 320
 FFMPEG_CMD = "ffmpeg"
-ICON_PATH = "/mnt/data/Gemini_Generated_Image_efbieefbieefbiee.jpg"
+ICON_PATH = "/mnt/data/app_icon.ico"
 # Added this constant back for completeness, even if the cropping PostProcessor is removed
 SQUARE_THUMBNAIL_SIZE = 500 
 
@@ -248,6 +248,7 @@ class DownloadWorker(QtCore.QThread):
 # ==========================
 # MAIN APP WINDOW
 # ==========================
+
 class AppWindow(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
