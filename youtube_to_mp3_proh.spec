@@ -5,7 +5,7 @@ a = Analysis(
     ['youtube_to_mp3_proh.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('app_icon.ico', '.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
