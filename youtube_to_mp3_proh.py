@@ -17,7 +17,16 @@ from PyQt6.QtWidgets import QLabel
 DEFAULT_OUTPUT_DIR = Path.home() / "Downloads"
 DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 BITRATE_KBPS = 320
-FFMPEG_CMD = "ffmpeg"
+
+def get_ffmpeg_path():
+    # If running as a PyInstaller EXE
+    if getattr(sys, "frozen", False):
+        return os.path.join(sys._MEIPASS, "ffmpeg.exe")
+    # If running from Python / VS Code
+    return "ffmpeg"
+
+FFMPEG_CMD = get_ffmpeg_path()
+
 ICON_PATH = "/mnt/data/app_icon.ico"
 # Added this constant back for completeness, even if the cropping PostProcessor is removed
 SQUARE_THUMBNAIL_SIZE = 500 
