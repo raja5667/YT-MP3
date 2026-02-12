@@ -48,8 +48,8 @@ YouTube-To-MP3-ProH/
 ### 1. Clone Repository
 
 ```bash
-git clone https://github.com/raja5667/YouTube-To-MP3-ProH.git
-cd YouTube-To-MP3-ProH
+git clone https://github.com/raja5667/YT-MP3.git
+cd YT-MP3
 ```
 
 ### 2. Create Virtual Environment
