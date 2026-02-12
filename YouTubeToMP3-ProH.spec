@@ -22,7 +22,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='youtube_to_mp3_proh',
+    name='YouTubeToMP3-ProH',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

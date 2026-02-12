@@ -92,7 +92,7 @@ pip install pyinstaller
 Build (portable version including FFmpeg):
 
 ```bash
-pyinstaller --onefile --windowed --icon=app_icon.ico --add-binary "ffmpeg.exe;." youtube_to_mp3_proh.py
+pyinstaller --onefile --windowed --icon=app_icon.ico --add-binary "ffmpeg.exe;." --name "YouTubeToMP3-ProH" youtube_to_mp3_proh.py
 ```
 
 The final executable will be inside:

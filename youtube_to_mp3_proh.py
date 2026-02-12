@@ -264,7 +264,7 @@ class DownloadWorker(QtCore.QThread):
 class AppWindow(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("YouTubeToMP3 Pro H (Fixed Cleanup)")
+        self.setWindowTitle("YouTube to MP3 Pro H")
         self.setFixedSize(850, 500)
         self.setStyleSheet("background-color: #202124;")
         
