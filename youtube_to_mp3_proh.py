@@ -19,11 +19,12 @@ DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 BITRATE_KBPS = 320
 
 def get_ffmpeg_path():
-    # If running as a PyInstaller EXE
+    # If running as PyInstaller EXE
     if getattr(sys, "frozen", False):
         return os.path.join(sys._MEIPASS, "ffmpeg.exe")
+
     # If running from Python / VS Code
-    return "ffmpeg"
+    return os.path.join(os.path.dirname(__file__), "ffmpeg.exe")
 
 FFMPEG_CMD = get_ffmpeg_path()
 
@@ -36,7 +37,7 @@ SQUARE_THUMBNAIL_SIZE = 500
 # ==========================
 def check_ffmpeg() -> bool:
     """Check if FFmpeg is installed and accessible in the system's PATH."""
-    return shutil.which(FFMPEG_CMD) is not None
+    return os.path.exists(FFMPEG_CMD)
 
 def safe_mkdir(p: Path):
     """Safely create a directory."""
@@ -232,6 +233,8 @@ class DownloadWorker(QtCore.QThread):
             "quiet": True,
             "no_warnings": True,
             "progress_hooks": [hook],
+
+            "ffmpeg_location": FFMPEG_CMD,
             
             # --- START: Options for Thumbnail Embedding ---
             "writethumbnail": True,  # 1. Download the thumbnail
