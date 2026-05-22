@@ -298,6 +298,7 @@ class DownloadWorker(QtCore.QThread):
         
         opts = {
             "format": "bestaudio/best",
+            "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "outtmpl": outtmpl,
             "noplaylist": False,
             "quiet": True,
@@ -680,28 +681,12 @@ class AppWindow(QtWidgets.QWidget):
 # ==========================
 # MAIN
 # ==========================
-def main():
-    # 1. Initialize the application first
-    app = QtWidgets.QApplication.instance()
-    if not app:
-        app = QtWidgets.QApplication(sys.argv)
-    
-    app.setFont(QtGui.QFont("Segoe UI", 10))
-    
-    # 2. Delay the creation of the Window until the app is running
-    # This prevents the UI from trying to paint before the event loop starts
-    def start_app():
-        global win
-        win = AppWindow()
-        win.show()
-    
-    QtCore.QTimer.singleShot(0, start_app)
-
-    # 3. Enter the loop
-    try:
-        sys.exit(app.exec())
-    except Exception as e:
-        print(f"Application error: {e}")
+def main(): 
+    app = QtWidgets.QApplication(sys.argv) 
+    app.setFont(QtGui.QFont("Segoe UI", 10)) 
+    win = AppWindow() 
+    win.show() 
+    sys.exit(app.exec())
 
 if __name__ == "__main__":
     main()  
