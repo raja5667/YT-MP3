@@ -8,6 +8,7 @@ A PyQt6-based desktop application to download YouTube audio as high-quality 320k
 
 - Download YouTube videos as MP3 (320kbps)
 - Playlist support
+- Volume Booster
 - Auto thumbnail embedding
 - Drag & drop YouTube links
 - Custom download directory
