@@ -5,6 +5,7 @@ import traceback
 from pathlib import Path
 from yt_dlp import YoutubeDL
 import socket
+import subprocess
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, pyqtProperty
@@ -127,10 +128,12 @@ class DownloadWorker(QtCore.QThread):
     finished = QtCore.pyqtSignal(str)
     error = QtCore.pyqtSignal(str)
 
-    def __init__(self, url: str, output_dir: str):
+    def __init__(self, url: str, output_dir: str, boost_enabled=False, boost_value=100):
         super().__init__()
         self.url = url
         self.output_dir = output_dir
+        self.boost_enabled = boost_enabled
+        self.boost_value = boost_value
         self._stop = False
         self._ydl = None
 
@@ -147,7 +150,30 @@ class DownloadWorker(QtCore.QThread):
                     self.finished.emit("Cancelled")
                     return
 
+                existing_mp3s = set(
+                    f for f in os.listdir(self.output_dir)
+                    if f.endswith(".mp3")
+                )
+
                 ydl.download([self.url])
+
+                if self.boost_enabled:
+                    current_mp3s = set(
+                        f for f in os.listdir(self.output_dir)
+                        if f.endswith(".mp3")
+                    )
+                
+                    new_mp3s = current_mp3s - existing_mp3s
+                
+                    for file in new_mp3s:
+                        mp3_path = os.path.join(self.output_dir, file)
+                
+                        self.status.emit("Boosting audio...")
+                
+                        self.boost_mp3_volume(
+                            mp3_path,
+                            self.boost_value
+                        )
 
                 if not self._stop:
                     self.finished.emit("Done")
@@ -205,6 +231,38 @@ class DownloadWorker(QtCore.QThread):
         except Exception:
             pass
 
+    def boost_mp3_volume(self, mp3_file, boost_percent):
+        try:
+            volume_multiplier = boost_percent / 100
+    
+            temp_file = mp3_file.replace(".mp3", "_boosted.mp3")
+    
+            cmd = [
+            FFMPEG_CMD,
+            "-y",
+            "-i", mp3_file,
+            "-map", "0",
+            "-c:v", "copy",
+            "-filter:a", f"volume={volume_multiplier}",
+            "-id3v2_version", "3",
+            temp_file
+        ]
+    
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True
+            )
+            
+            if result.returncode != 0:
+                raise Exception(result.stderr)
+    
+            os.remove(mp3_file)
+            os.rename(temp_file, mp3_file)
+    
+        except Exception as e:
+            self.status.emit(f"Boost failed: {e}")     
+
     def _make_opts(self, output_dir):
         outtmpl = os.path.join(output_dir, "%(title)s.%(ext)s")
         def hook(d):
@@ -225,6 +283,18 @@ class DownloadWorker(QtCore.QThread):
                 self.status.emit(f"Downloading: {pct_val:5.1f}% — {short}")
             elif status == "finished":
                 self.status.emit("Converting/Embedding...")
+
+        postprocessors = [
+            {
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": str(BITRATE_KBPS),
+            }
+        ]
+        
+        postprocessors.append({
+            "key": "EmbedThumbnail",
+        })         
         
         opts = {
             "format": "bestaudio/best",
@@ -233,25 +303,12 @@ class DownloadWorker(QtCore.QThread):
             "quiet": True,
             "no_warnings": True,
             "progress_hooks": [hook],
-
             "ffmpeg_location": FFMPEG_CMD,
+            "writethumbnail": True,  
+            "embed_thumbnail": True,
+            "keepvideo": False,      
+            "postprocessors": postprocessors,
             
-            # --- START: Options for Thumbnail Embedding ---
-            "writethumbnail": True,  # 1. Download the thumbnail
-            "embed_thumbnail": True, # 2. Indicate that we want to embed the thumbnail
-            "keepvideo": False,      # Remove temporary video/audio files
-            # --- END: Options for Thumbnail Embedding ---
-            
-            "postprocessors": [
-                {
-                    "key": "FFmpegExtractAudio",
-                    "preferredcodec": "mp3",
-                    "preferredquality": str(BITRATE_KBPS),
-                },
-                {
-                    "key": "EmbedThumbnail", # 3. The postprocessor that does the embedding
-                },
-            ],
             "retries": 3,
             "continuedl": True,
         }
@@ -336,6 +393,42 @@ class AppWindow(QtWidgets.QWidget):
         f.addWidget(self.input_line)
         outer.addWidget(self.input_frame)
         outer.addSpacing(6)
+
+        # Sound Boost
+        boost_layout = QtWidgets.QHBoxLayout()
+        
+        self.boost_toggle = QtWidgets.QCheckBox("Sound Boost")
+        self.boost_toggle.setStyleSheet("""
+            QCheckBox {
+                color: white;
+                font-size: 14px;
+            }
+        """)
+        
+        self.boost_slider = QtWidgets.QSlider(Qt.Orientation.Horizontal)
+        self.boost_slider.setRange(100, 200)
+        self.boost_slider.setValue(100)
+        self.boost_slider.setVisible(False)
+        
+        self.boost_label = QLabel("150%")
+        self.boost_label.setStyleSheet("color:white;")
+        self.boost_label.setVisible(False)
+        
+        self.boost_toggle.toggled.connect(
+            lambda checked: (
+                self.boost_slider.setVisible(checked),
+                self.boost_label.setVisible(checked)
+            )
+        )
+        
+        self.boost_slider.valueChanged.connect(self.update_boost_ui)
+        self.update_boost_ui(self.boost_slider.value())
+        
+        boost_layout.addWidget(self.boost_toggle)
+        boost_layout.addWidget(self.boost_slider)
+        boost_layout.addWidget(self.boost_label)
+        
+        outer.addLayout(boost_layout)
 
         # Download path
         path_row = QtWidgets.QHBoxLayout()
@@ -464,7 +557,15 @@ class AppWindow(QtWidgets.QWidget):
             return
 
         safe_mkdir(self.output_dir)
-        self.worker = DownloadWorker(url, str(self.output_dir))
+        boost_enabled = self.boost_toggle.isChecked()
+        boost_value = self.boost_slider.value()
+        
+        self.worker = DownloadWorker(
+            url,
+            str(self.output_dir),
+            boost_enabled,
+            boost_value
+        )
         self.worker.progress.connect(self._on_progress)
         self.worker.status.connect(self._on_status)
         self.worker.finished.connect(self._on_finished)
@@ -491,6 +592,46 @@ class AppWindow(QtWidgets.QWidget):
         self.btn_cancel.setEnabled(False)
         QtCore.QTimer.singleShot(5000, self.reset_ui)
 
+    def update_boost_ui(self, value):
+        self.boost_label.setText(f"{value}%")
+    
+        min_val = 100
+        max_val = 200
+    
+        ratio = (value - min_val) / (max_val - min_val)
+        ratio = max(0.0, min(1.0, ratio))
+    
+        # Smooth Green -> Red transition
+        r = int(52 + (234 - 52) * ratio)
+        g = int(168 + (67 - 168) * ratio)
+        b = int(83 + (53 - 83) * ratio)
+    
+        color = f"rgb({r},{g},{b})"
+    
+        self.boost_slider.setStyleSheet(f"""
+            QSlider::groove:horizontal {{
+                height: 8px;
+                background: #3c4043;
+                border-radius: 4px;
+            }}
+    
+            QSlider::sub-page:horizontal {{
+                background: {color};
+                border-radius: 4px;
+            }}
+    
+            QSlider::handle:horizontal {{
+                background: white;
+                width: 18px;
+                margin: -6px 0;
+                border-radius: 9px;
+            }}
+        """)
+    
+        self.boost_label.setStyleSheet(
+            f"color:{color}; font-weight:bold;"
+        )     
+
     # ------------------------
     # SIGNAL HANDLERS
     # ------------------------
@@ -505,7 +646,7 @@ class AppWindow(QtWidgets.QWidget):
         self.lbl_status.setText(msg)
         self.btn_download.setEnabled(True)
         self.btn_cancel.setEnabled(False)
-        QtCore.QTimer.singleShot(10000, self.reset_ui)
+        QtCore.QTimer.singleShot(5000, self.reset_ui)
 
     def _on_error(self, err):
         if "Download cancelled by user" not in err:
@@ -518,7 +659,10 @@ class AppWindow(QtWidgets.QWidget):
         self.input_line.clear()
         self.progress.setValue(0)
         self.lbl_status.setText("Ready")
-
+    
+        self.boost_toggle.setChecked(False)
+        self.boost_slider.setValue(100)
+        
     # ------------------------
     # DRAG & DROP
     # ------------------------
@@ -537,11 +681,27 @@ class AppWindow(QtWidgets.QWidget):
 # MAIN
 # ==========================
 def main():
-    app = QtWidgets.QApplication(sys.argv)
+    # 1. Initialize the application first
+    app = QtWidgets.QApplication.instance()
+    if not app:
+        app = QtWidgets.QApplication(sys.argv)
+    
     app.setFont(QtGui.QFont("Segoe UI", 10))
-    win = AppWindow()
-    win.show()
-    sys.exit(app.exec())
+    
+    # 2. Delay the creation of the Window until the app is running
+    # This prevents the UI from trying to paint before the event loop starts
+    def start_app():
+        global win
+        win = AppWindow()
+        win.show()
+    
+    QtCore.QTimer.singleShot(0, start_app)
+
+    # 3. Enter the loop
+    try:
+        sys.exit(app.exec())
+    except Exception as e:
+        print(f"Application error: {e}")
 
 if __name__ == "__main__":
-    main()
+    main()  
