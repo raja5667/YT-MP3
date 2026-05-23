@@ -1,6 +1,5 @@
 import os
 import sys
-import shutil
 import traceback
 from pathlib import Path
 from yt_dlp import YoutubeDL
