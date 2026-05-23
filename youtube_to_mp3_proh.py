@@ -233,7 +233,7 @@ class DownloadWorker(QtCore.QThread):
 
     def boost_mp3_volume(self, mp3_file, boost_percent):
         try:
-            volume_multiplier = boost_percent / 100
+            volume_multiplier = boost_percent / 50
     
             temp_file = mp3_file.replace(".mp3", "_boosted.mp3")
     
