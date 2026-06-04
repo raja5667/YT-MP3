@@ -1173,19 +1173,23 @@ class AppWindow(QtWidgets.QWidget):
         event.accept()
 
 def main(): 
-    logging.basicConfig(
-        filename="youtube_to_mp3.log",
-        filemode="a", 
-        format="%(asctime)s [%(levelname)s] (%(threadName)s) %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-        level=logging.ERROR 
-    )
+    is_frozen = getattr(sys, 'frozen', False)
+    if not is_frozen:
+        logging.basicConfig(
+            filename="youtube_to_mp3.log",
+            filemode="a", 
+            format="%(asctime)s [%(levelname)s] (%(threadName)s) %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+            level=logging.ERROR 
+        )
+        
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s]: %(message)s"))
+        logging.getLogger().addHandler(console_handler)
     
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s]: %(message)s"))
-    logging.getLogger().addHandler(console_handler)
-
-    print("Logging initialized. Writing diagnostics to 'youtube_to_mp3.log'")
+        print("Logging initialized. Writing diagnostics to 'youtube_to_mp3.log'")
+    else:
+        logging.getLogger().addHandler(logging.NullHandler())
 
     app = QtWidgets.QApplication(sys.argv) 
     app.setFont(QtGui.QFont("Segoe UI", 10)) 
