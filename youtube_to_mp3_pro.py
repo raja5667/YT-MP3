@@ -28,7 +28,6 @@ YOUTUBE_REGEX = re.compile(
     r'([a-zA-Z0-9_-]+)', re.IGNORECASE
 )
 
-# Also matches short links like youtu.be/VIDEO_ID
 YOUTU_BE_REGEX = re.compile(
     r'(https?://)?youtu\.be/([a-zA-Z0-9_-]+)', re.IGNORECASE
 )
@@ -37,6 +36,28 @@ def is_valid_youtube_url(url: str) -> bool:
     """Returns True if the string matches any valid YouTube format."""
     url = url.strip()
     return bool(YOUTUBE_REGEX.match(url) or YOUTU_BE_REGEX.match(url))
+
+def is_playlist_url(url: str) -> bool:
+    """Returns True if the URL is a YouTube playlist (not a single video)."""
+    url = url.strip()
+    return "list=" in url and "watch?v=" not in url
+
+def boost_slider_to_db(slider_value: int) -> float:
+    """Convert boost slider (100-200) to dB gain for FFmpeg.
+    100 = 0dB (no change), 200 = +18dB (loud ceiling with dynaudnorm+alimiter).
+    """
+    return (slider_value - 100) * 0.18
+
+def boost_slider_to_vlc_volume(slider_value: int) -> int:
+    """Convert boost slider (100-200) to VLC volume (0-200) using the same
+    perceptual curve as the FFmpeg dB gain so preview matches download.
+    dB to linear: amplitude = 10^(dB/20), then scale to VLC 0-200 range.
+    """
+    import math
+    gain_db = boost_slider_to_db(slider_value)
+    linear = 10 ** (gain_db / 20.0)
+    vlc_vol = int(round(linear * 100))
+    return max(0, min(200, vlc_vol))
 
 def resolve_ffmpeg_path() -> str:
     """
@@ -61,9 +82,6 @@ FFMPEG_CMD = resolve_ffmpeg_path()
 ICON_PATH = "/mnt/data/app_icon.ico"
 SQUARE_THUMBNAIL_SIZE = 500 
 
-# ==========================
-# UTILITY FUNCTIONS
-# ==========================
 # ==========================
 # UTILITY FUNCTIONS
 # ==========================
@@ -158,6 +176,7 @@ class DownloadWorker(QtCore.QThread):
     status = QtCore.pyqtSignal(str)
     finished = QtCore.pyqtSignal(str)
     error = QtCore.pyqtSignal(str)
+    skipped = QtCore.pyqtSignal(int)
 
     def __init__(self, url: str, output_dir: str, boost_enabled=False, boost_value=100):
         super().__init__()
@@ -169,14 +188,21 @@ class DownloadWorker(QtCore.QThread):
         self._ydl = None
         self.current_downloaded_files = set()
         
-        # New tracking states for playlist metrics
         self.current_index = 1
         self.total_tracks = 1
+        self.failed_tracks = 0
+        self.last_downloaded_mp3 = None
 
     def run(self):
         try:
-            # Pass 1: Extract overall link metadata
-            opts_meta = self._make_opts(self.output_dir)
+            opts_meta = {
+                "quiet": True,
+                "no_warnings": True,
+                "skip_download": True,
+                "ignoreerrors": True,
+                "noplaylist": False,
+                "extract_flat": "in_playlist",
+            }
             with YoutubeDL(opts_meta) as ydl:
                 self._ydl = ydl
                 self.status.emit("Extracting link metadata...")
@@ -189,8 +215,9 @@ class DownloadWorker(QtCore.QThread):
                     raise Exception("Failed to extract video information.")
 
                 if "entries" in info:
-                    entries = list(info["entries"])
+                    entries = [e for e in info["entries"] if e is not None]
                     self.total_tracks = len(entries)
+                    self.failed_tracks = 0
                     self.status.emit(f"Found playlist with {self.total_tracks} tracks. Starting...")
                     
                     for index, entry in enumerate(entries, start=1):
@@ -198,31 +225,34 @@ class DownloadWorker(QtCore.QThread):
                             self.finished.emit("Cancelled")
                             return
                         
-                        if not entry:
-                            continue
-                            
                         self.current_index = index
-                        track_url = entry.get("url") or entry.get("webpage_url")
-                        if not track_url:
+                        video_id = entry.get("id") or entry.get("url")
+                        webpage_url = entry.get("webpage_url")
+                        if webpage_url:
+                            track_url = webpage_url
+                        elif video_id:
+                            track_url = f"https://www.youtube.com/watch?v={video_id}"
+                        else:
                             continue
                             
-                        title = entry.get("title", f"Track_{index}")
+                        title = entry.get("title") or f"Track_{index}"
                         for char in ['\\', '/', ':', '*', '?', '"', '<', '>', '|']:
                             title = title.replace(char, "_")
                             
                         self.status.emit(f"[{index}/{self.total_tracks}] Processing: {title[:30]}...")
                         
-                        track_opts = self._make_opts(self.output_dir)
+                        track_opts = self._make_opts(self.output_dir, noplaylist=False)
                         with YoutubeDL(track_opts) as single_ydl:
                             if self._stop:
                                 self.finished.emit("Cancelled")
                                 return
                             single_ydl.download([track_url])
                         
-                        final_mp3 = os.path.join(self.output_dir, f"{title}.mp3")
-                        if self.boost_enabled and os.path.exists(final_mp3) and not self._stop:
+                        final_mp3 = self.last_downloaded_mp3 or os.path.join(self.output_dir, f"{title}.mp3")
+                        if self.boost_enabled and final_mp3 and os.path.exists(final_mp3) and not self._stop:
                             self.status.emit(f"[{index}/{self.total_tracks}] Boosting Audio...")
                             self.boost_mp3_volume(final_mp3, self.boost_value)
+                        self.last_downloaded_mp3 = None
                 else:
                     # Single video handling
                     self.total_tracks = 1
@@ -239,17 +269,20 @@ class DownloadWorker(QtCore.QThread):
                     with YoutubeDL(opts_dl) as single_ydl:
                         single_ydl.download([self.url])
     
-                    if self.boost_enabled and os.path.exists(final_mp3) and not self._stop:
+                    final_mp3 = self.last_downloaded_mp3 or final_mp3
+                    if self.boost_enabled and final_mp3 and os.path.exists(final_mp3) and not self._stop:
                         self.status.emit("Boosting audio...")
                         self.boost_mp3_volume(final_mp3, self.boost_value)
     
                 if not self._stop:
-                    self.finished.emit("Done")
+                    if "entries" in info and self.failed_tracks > 0:
+                        self.finished.emit(f"Done — {self.total_tracks - self.failed_tracks} downloaded, {self.failed_tracks} skipped (unavailable)")
+                    else:
+                        self.finished.emit("Done")
     
         except Exception as e:
-            # <--- REPLACE YOUR OLD EXCEPT BLOCK WITH THIS NEW ONE --->
             if self._stop or "cancelled" in str(e).lower():
-                self._stop = True  # Ensure flag is locked to True
+                self._stop = True  
                 self.finished.emit("Cancelled")
             else:
                 tb = traceback.format_exc()
@@ -273,7 +306,6 @@ class DownloadWorker(QtCore.QThread):
         to ensure no orphan file remnants (including thumbnails) persist post-cancellation.
         """
         try:
-            # First pass: Clean explicitly tracked file dependencies
             for file_path in list(self.current_downloaded_files):
                 if os.path.exists(file_path):
                     if file_path.endswith((".part", ".ytdl", ".temp", ".tmp", ".webm", ".mp4", ".m4a", ".wav", ".webp", ".jpg", ".jpeg", ".png")):
@@ -281,10 +313,8 @@ class DownloadWorker(QtCore.QThread):
                     elif file_path.endswith(".mp3") and (self._stop or os.path.getsize(file_path) < 200 * 1024):
                         os.remove(file_path)
 
-            # Second pass: Aggressive fallback check for untracked fragments and stray images
             if self._stop and os.path.exists(self.output_dir):
                 for filename in os.listdir(self.output_dir):
-                    # Check for partial video parts AND loose image extensions left by cancelled links
                     if filename.endswith((".part", ".ytdl", ".temp", ".webp", ".jpg", ".jpeg", ".png")):
                         full_bad_path = os.path.join(self.output_dir, filename)
                         try:
@@ -297,39 +327,56 @@ class DownloadWorker(QtCore.QThread):
 
     def boost_mp3_volume(self, mp3_file, boost_percent):
         try:
-            volume_multiplier = boost_percent / 50
             temp_file = mp3_file.replace(".mp3", "_boosted.mp3")
-            self.current_downloaded_files.add(temp_file)
-    
+            
+            gain_db = boost_slider_to_db(boost_percent)
+            audio_filter = (
+                f"volume={gain_db:.2f}dB,"
+                "dynaudnorm=p=0.9:m=100:s=5,"
+                "alimiter=level_in=1:level_out=1:limit=0.95:attack=5:release=50"
+            )
             cmd = [
                 FFMPEG_CMD,
                 "-y",
                 "-i", mp3_file,
-                "-map", "0",
-                "-c:v", "copy",
-                "-filter:a", f"volume={volume_multiplier}",
+                "-filter:a", audio_filter,
+                "-codec:a", "libmp3lame",
+                "-b:a", "320k",
+                "-ar", "44100",
                 "-id3v2_version", "3",
                 temp_file
             ]
-    
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            if result.returncode != 0:
-                raise Exception(result.stderr)
-    
-            os.remove(mp3_file)
-            os.rename(temp_file, mp3_file)
-            
-            if temp_file in self.current_downloaded_files:
-                self.current_downloaded_files.remove(temp_file)
-            self.current_downloaded_files.add(mp3_file)
-    
-        except Exception:
-            logging.exception("Boost failed")
-            self.status.emit("Boost failed. Check logs.")  
 
-    def _make_opts(self, output_dir):
+            result = subprocess.run(cmd, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            if result.returncode != 0:
+                raise Exception(f"FFmpeg Error: {result.stderr}")
+
+            if os.path.exists(temp_file) and os.path.getsize(temp_file) > 1024:
+                os.remove(mp3_file)
+                os.rename(temp_file, mp3_file)
+            else:
+                raise Exception("Output file empty or missing.")
+
+        except Exception as e:
+            logging.exception(f"Boost failed for {mp3_file}: {e}")
+            self.status.emit("Boost failed. Check logs.")
+
+    def _make_opts(self, output_dir, noplaylist=True):
         outtmpl = os.path.join(output_dir, "%(title)s.%(ext)s")
-        
+
+        worker_ref = self
+        class YtdlpLogger:
+            def debug(self, msg): pass
+            def warning(self, msg): pass
+            def error(self, msg):
+                if "Video unavailable" in msg or "This video is not available" in msg or "Private video" in msg:
+                    worker_ref.failed_tracks += 1
+                    worker_ref.skipped.emit(worker_ref.failed_tracks)
+                    worker_ref.status.emit(
+                        f"[{worker_ref.current_index}/{worker_ref.total_tracks}] "
+                        f"Skipped (unavailable) | Total skipped: {worker_ref.failed_tracks}"
+                    )
+
         def hook(d):
             if self._stop:
                 raise Exception("Download cancelled by user.")
@@ -348,7 +395,6 @@ class DownloadWorker(QtCore.QThread):
                 except Exception:
                     pct_val = 0.0
                 
-                # Calculate true cumulative playlist percentage
                 overall_pct = (((self.current_index - 1) + (pct_val / 100.0)) / self.total_tracks) * 100.0
                 self.progress.emit(overall_pct)
                 
@@ -358,7 +404,9 @@ class DownloadWorker(QtCore.QThread):
                     f"Downloading: {pct_val:5.1f}% (Overall: {overall_pct:.1f}%) — {short[:25]}"
                 )
             elif status == "finished":
-                # Ensure accurate transition state step metrics
+                if filename:
+                    mp3_path = os.path.splitext(os.path.abspath(filename))[0] + ".mp3"
+                    self.last_downloaded_mp3 = mp3_path
                 overall_finished_pct = (self.current_index / self.total_tracks) * 100.0
                 self.progress.emit(overall_finished_pct)
                 self.status.emit(f"[{self.current_index}/{self.total_tracks}] Converting audio streams...")
@@ -367,7 +415,7 @@ class DownloadWorker(QtCore.QThread):
             {
                 "key": "FFmpegExtractAudio",
                 "preferredcodec": "mp3",
-                "preferredquality": str(BITRATE_KBPS),
+                "preferredquality": "0",
             },
             {
                 "key": "EmbedThumbnail",
@@ -378,9 +426,10 @@ class DownloadWorker(QtCore.QThread):
             "format": "bestaudio/best",
             "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "outtmpl": outtmpl,
-            "noplaylist": True, 
+            "noplaylist": noplaylist, 
             "quiet": True,
             "no_warnings": True,
+            "logger": YtdlpLogger(),
             "progress_hooks": [hook],
             "ffmpeg_location": FFMPEG_CMD,
             "writethumbnail": True,  
@@ -389,6 +438,7 @@ class DownloadWorker(QtCore.QThread):
             "postprocessors": postprocessors,
             "retries": 3,
             "continuedl": True,
+            "ignoreerrors": True,
         }
         return opts
 
@@ -396,68 +446,130 @@ class DownloadWorker(QtCore.QThread):
 # PREVIEW WORKER THREAD
 # ==========================
 class PreviewWorker(QtCore.QThread):
-    preview_ready = QtCore.pyqtSignal(str)
+    preview_ready = QtCore.pyqtSignal(str)  
     preview_failed = QtCore.pyqtSignal(str)
 
-    def __init__(self, url: str):
+    def __init__(self, url: str, boost_enabled: bool = False, boost_value: int = 100):
         super().__init__()
         self.url = url
-        self._stop = False  # Safe control variable
+        self.boost_enabled = boost_enabled
+        self.boost_value = boost_value
+        self._stop = False 
 
     def stop(self):
         """Called externally from main UI thread to request safe cessation."""
         self._stop = True
 
     def run(self):
+        import tempfile
+        preview_file = os.path.join(tempfile.gettempdir(), "yt_preview.mp3")
+        raw_file = os.path.join(tempfile.gettempdir(), "yt_preview_raw.mp3")
+
         try:
-            # Custom progress hook specifically to abort preview processing immediately
+            for f in (preview_file, raw_file):
+                try:
+                    if os.path.exists(f):
+                        os.remove(f)
+                except Exception:
+                    pass
+
             def preview_hook(d):
                 if self._stop:
                     raise Exception("Preview generation aborted by user request.")
-
+    
             preview_opts = {
                 "quiet": True,
                 "format": "bestaudio/best",
-                "socket_timeout": 3,
-                "retries": 0,
-                "fragment_retries": 0,
-                "skip_download": True,
+                "socket_timeout": 10,
+                "retries": 1,
+                "fragment_retries": 1,
                 "no_warnings": True,
                 "noplaylist": True,
-                "progress_hooks": [preview_hook] # Attaching the safety interruption hook
+                "outtmpl": raw_file.replace(".mp3", ".%(ext)s"),
+                "ffmpeg_location": FFMPEG_CMD,
+                "postprocessors": [
+                    {
+                        "key": "FFmpegExtractAudio",
+                        "preferredcodec": "mp3",
+                        "preferredquality": "0",
+                    }
+                ],
+        
+                "postprocessor_args": {
+                    "FFmpegExtractAudio": ["-t", "30"],
+                },
+                "progress_hooks": [preview_hook],
             }
 
             if self._stop:
                 return
 
             with YoutubeDL(preview_opts) as ydl:
-                info = ydl.extract_info(self.url, download=False)
-                if self._stop:
-                    return
-                
-                if not info:
-                    self.preview_failed.emit("Invalid YouTube link.")
-                    return
-                
-                if "entries" in info:
-                    entries = list(info["entries"])
-                    if entries and entries[0]:
-                        audio_url = entries[0].get("url")
-                    else:
-                        audio_url = None
-                else:
-                    audio_url = info.get("url")
+                ydl.download([self.url])
 
-                if self._stop:
-                    return
+            if self._stop:
+                return
 
-                if audio_url:
-                    self.preview_ready.emit(audio_url)
-                else:
-                    self.preview_failed.emit("Could not load preview stream.")
+    
+            if not os.path.exists(raw_file):
+                self.preview_failed.emit("Could not download preview audio.")
+                return
+
+    
+            if self.boost_enabled:
+                gain_db = boost_slider_to_db(self.boost_value)
+                audio_filter = (
+                    f"volume={gain_db:.2f}dB,"
+                    "dynaudnorm=p=0.9:m=100:s=5,"
+                    "alimiter=level_in=1:level_out=1:limit=0.95:attack=5:release=50"
+                )
+            else:
+        
+                audio_filter = "volume=0dB"
+
+            cmd = [
+                FFMPEG_CMD,
+                "-y",
+                "-i", raw_file,
+                "-filter:a", audio_filter,
+                "-codec:a", "libmp3lame",
+                "-b:a", "320k",
+                "-ar", "44100",
+                "-id3v2_version", "3",
+                preview_file,
+            ]
+
+            if self._stop:
+                return
+
+            result = subprocess.run(cmd, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            if result.returncode != 0:
+                raise Exception(f"FFmpeg preview encode error: {result.stderr}")
+
+    
+            try:
+                os.remove(raw_file)
+            except Exception:
+                pass
+
+            if self._stop:
+                return
+
+            if os.path.exists(preview_file) and os.path.getsize(preview_file) > 1024:
+                self.preview_ready.emit(preview_file)
+            else:
+                self.preview_failed.emit("Preview file empty or missing.")
+
         except Exception as e:
             print(f"Preview extraction thread noted cancellation/failure: {e}")
-            # Only emit failure if the user didn't intentionally stop the thread
+    
+            for f in (preview_file, raw_file):
+                try:
+                    if os.path.exists(f):
+                        os.remove(f)
+                except Exception:
+                    pass
+    
             if not self._stop:
                 self.preview_failed.emit("Invalid or broken YouTube link.")
 
@@ -467,7 +579,7 @@ class PreviewWorker(QtCore.QThread):
 class AppWindow(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("YouTube to MP3 Pro H")
+        self.setWindowTitle("YouTube to MP3 Pro")
         self.setFixedSize(850, 500)
         self.setStyleSheet("""
             QWidget {
@@ -514,12 +626,11 @@ class AppWindow(QtWidgets.QWidget):
             "<span style='color:#FBBC05'>U</span><span style='color:#34A853'>T</span>"
             "<span style='color:#4285F4'>U</span><span style='color:#EA4335'>B</span>"
             "<span style='color:#FBBC05'>E</span><span style='color:#34A853'>&nbsp;</span>"
-            "<span style='color:#4285F4'>T</span><span style='color:#EA4335'>O</span>"
+            "<span style='color:#4285F4'>T</span><span style='color:#EA4335'>O</span>&nbsp;"  
             "<span style='color:#FBBC05'>M</span><span style='color:#34A853'>P</span>"
             "<span style='color:#4285F4'>3</span><span style='color:#EA4335'>&nbsp;</span>"
             "<span style='color:#FBBC05'>P</span><span style='color:#34A853'>R</span>"
             "<span style='color:#4285F4'>O</span><span style='color:#EA4335'>&nbsp;</span>"
-            "<span style='color:#FBBC05'>H</span>"
             "</span>"
         )
         title.setAlignment(Qt.AlignmentFlag.AlignHCenter)
@@ -626,9 +737,16 @@ class AppWindow(QtWidgets.QWidget):
         btn_row.addWidget(self.btn_cancel)
         outer.addLayout(btn_row)
 
+        status_row = QtWidgets.QHBoxLayout()
         self.lbl_status = QLabel("Ready")
         self.lbl_status.setStyleSheet("color: rgba(255,255,255,0.85); font-size: 15px; padding-left: 4px;")
-        outer.addWidget(self.lbl_status)
+        status_row.addWidget(self.lbl_status)
+        status_row.addStretch()
+        self.lbl_skipped = QLabel("")
+        self.lbl_skipped.setStyleSheet("color: #FBBC05; font-size: 13px; font-weight: bold; padding-right: 4px;")
+        self.lbl_skipped.setVisible(False)
+        status_row.addWidget(self.lbl_skipped)
+        outer.addLayout(status_row)
         outer.addSpacing(8)
         
         self.progress = QtWidgets.QProgressBar()
@@ -683,14 +801,29 @@ class AppWindow(QtWidgets.QWidget):
         
         outer.addLayout(player_row)
         outer.addStretch()
+        footer_container = QtWidgets.QWidget()
+        footer_layout = QtWidgets.QVBoxLayout(footer_container)
+        footer_layout.setContentsMargins(0, 0, 0, 0)
+        footer_layout.setSpacing(2) # Small space between lines
+        
         footer = QLabel(
             "MP3 - 320kbps <span style='color:#FBBC05;'>•</span> "
             "Playlist Support <span style='color:#FBBC05;'>•</span> "
             "Drag & Drop Enabled"
         )
         footer.setStyleSheet("color:#BDC1C6; font-size:13px;")
-        footer.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-        outer.addWidget(footer)
+        footer.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        contact_label = QLabel(
+            'If you face any error, <a href="https://raja5667.github.io/MONO/contact.html" style="color: #4285F4; text-decoration: none;">contact us</a>.'
+        )
+        contact_label.setStyleSheet("color:#BDC1C6; font-size:12px;")
+        contact_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        contact_label.setOpenExternalLinks(True)
+        
+        footer_layout.addWidget(footer)
+        footer_layout.addWidget(contact_label)
+        outer.addWidget(footer_container)
         self.update_preview_button_state()
 
     def toggle_play_pause(self):
@@ -705,7 +838,7 @@ class AppWindow(QtWidgets.QWidget):
 
     def update_preview_button_state(self):
         url = self.input_line.text().strip()
-        valid = is_valid_youtube_url(url)
+        valid = is_valid_youtube_url(url) and not is_playlist_url(url)
         self.btn_play_pause.setEnabled(bool(valid))
 
     def change_path(self):
@@ -723,7 +856,6 @@ class AppWindow(QtWidgets.QWidget):
     
         url = self.input_line.text().strip()
         
-        # 1. If the input is completely empty, clean up the player quietly
         if not url:
             self.reset_player_ui()
             self.btn_play_pause.setEnabled(False)
@@ -733,20 +865,22 @@ class AppWindow(QtWidgets.QWidget):
                 self._current_preview_url = ""
             return
     
-        # 2. If it's NOT a valid YouTube link yet, just wait quietly.
-        # DO NOT reset the player UI here, otherwise it will wipe out a song 
-        # that is currently playing if the user clicks into the text box.
         if not is_valid_youtube_url(url):
             self.btn_play_pause.setEnabled(False)
             self.lbl_status.setText("Waiting for valid link...")
             return
+
+        if is_playlist_url(url):
+            self.reset_player_ui()
+            self.btn_play_pause.setEnabled(False)
+            self.lbl_status.setText("Preview not available for playlists.")
+            if hasattr(self, "_current_preview_url"):
+                self._current_preview_url = ""
+            return
             
-        # 3. CRITICAL BIAS CHECK: If this exact URL is already being processed or playing, 
-        # do absolutely nothing! This stops the typing loop from spamming threads.
         if hasattr(self, "_current_preview_url") and self._current_preview_url == url:
             return
 
-        # 4. A new valid link was pasted! Safe to stop previous tasks and fetch
         if self.preview_worker and self.preview_worker.isRunning():
             self.preview_worker.stop()
             self.preview_worker.wait()
@@ -755,29 +889,33 @@ class AppWindow(QtWidgets.QWidget):
         self.btn_play_pause.setEnabled(False)
         self.seek_slider.setEnabled(False)
         
-        # Lock this URL into memory so it doesn't re-trigger on the next text change
+
         self._current_preview_url = url
 
-        self.preview_worker = PreviewWorker(url)
+        self.preview_worker = PreviewWorker(
+            url,
+            boost_enabled=self.boost_toggle.isChecked(),
+            boost_value=self.boost_slider.value(),
+        )
         self.preview_worker.preview_ready.connect(self._on_preview_ready)
         self.preview_worker.preview_failed.connect(self._on_preview_failed)
         self.preview_worker.start()
 
-    def _on_preview_ready(self, audio_url):
+    def _on_preview_ready(self, preview_file):
         try:
             self.btn_play_pause.setEnabled(True)
             self.seek_slider.setEnabled(True)
             
-            # Clear media out explicitly rather than interrupting a hardware loop
+    
             self.player.set_media(None) 
             
-            # Form standard media instance
-            media = self.vlc_instance.media_new(audio_url)
+    
+            media = self.vlc_instance.media_new(preview_file)
             self.player.set_media(media)
             
-            # Crucial: Pre-buffer the track and set initial volume without starting playback
-            self.player.audio_set_volume(self.boost_slider.value() if self.boost_toggle.isChecked() else 100)
-            self.player.stop() 
+    
+            self.player.audio_set_volume(100)
+            self.player.stop()
             
             self.lbl_status.setText("Preview is ready")
             self.lbl_playback_state.setText("[ Ready ]")
@@ -815,6 +953,9 @@ class AppWindow(QtWidgets.QWidget):
         self.worker.status.connect(self._on_status)
         self.worker.finished.connect(self._on_finished)
         self.worker.error.connect(self._on_error)
+        self.worker.skipped.connect(self._on_skipped)
+        self.lbl_skipped.setText("")
+        self.lbl_skipped.setVisible(False)
 
         self.btn_download.setEnabled(False)
         self.btn_cancel.setEnabled(True)
@@ -826,10 +967,13 @@ class AppWindow(QtWidgets.QWidget):
         if self.worker and self.worker.isRunning():
             try:
                 self.worker.stop()
-                self.worker.wait() # Wait completely to guarantee partial file deletion finishes!
+        
+                self.worker.wait(3000)
             except Exception as e:
                 print(f"Error terminating download execution worker: {e}")
         self.lbl_status.setText("Cancelled")
+        self.lbl_skipped.setText("")
+        self.lbl_skipped.setVisible(False)
         self.progress.setValue(0)
         self.input_line.clear()
         self.btn_download.setEnabled(True)
@@ -855,10 +999,17 @@ class AppWindow(QtWidgets.QWidget):
     def toggle_boost(self, checked):
         self.boost_slider.setVisible(checked)
         self.boost_label.setVisible(checked)
+
         try:
-            self.player.audio_set_volume(self.boost_slider.value() if checked else 100)
+            self.player.audio_set_volume(100)
         except Exception as e:
             print(f"Error applying audio toggle volume modification: {e}")
+
+        if hasattr(self, "_current_preview_url"):
+            cached = self._current_preview_url
+            self._current_preview_url = ""
+            if cached:
+                self.preview_audio()
 
     def delayed_volume_update(self, value):
         if not hasattr(self, "_volume_timer"):
@@ -868,10 +1019,16 @@ class AppWindow(QtWidgets.QWidget):
         self._volume_timer.start(60)
     
     def apply_volume(self, value):
+
         try:
-            self.player.audio_set_volume(value)
+            self.player.audio_set_volume(100)
         except Exception as e:
             print(f"Error modifying active VLC audio channel gain: {e}")
+
+        if hasattr(self, "_current_preview_url") and self._current_preview_url:
+            cached = self._current_preview_url
+            self._current_preview_url = ""
+            self.preview_audio()
 
     def update_player_ui(self):
         try:
@@ -924,6 +1081,10 @@ class AppWindow(QtWidgets.QWidget):
         self.btn_cancel.setEnabled(False)
         QtCore.QTimer.singleShot(5000, self.reset_ui)
 
+    def _on_skipped(self, count):
+        self.lbl_skipped.setText(f"⚠ Skipped: {count}")
+        self.lbl_skipped.setVisible(True)
+
     def _on_error(self, err):
         if "Download cancelled by user" not in err:
             QtWidgets.QMessageBox.critical(self, "Error", err)
@@ -945,6 +1106,8 @@ class AppWindow(QtWidgets.QWidget):
         self.input_line.clear()
         self.progress.setValue(0)
         self.lbl_status.setText("Ready")
+        self.lbl_skipped.setText("")
+        self.lbl_skipped.setVisible(False)
         self.boost_toggle.setChecked(False)
         self.boost_slider.setValue(100)
         self.seek_slider.setValue(0)
@@ -964,30 +1127,30 @@ class AppWindow(QtWidgets.QWidget):
         elif e.mimeData().hasText():
             self.input_line.setText(e.mimeData().text())
 
-    # === ADD THIS CLOSE EVENT METHOD TO PREVENT MEMORY LEAKS ===
     def closeEvent(self, event):
         """
         Intercepts application window closure to cleanly deallocate resources,
         stopping threads, killing active timers, and releasing unmanaged VLC objects.
         """
         print("Application shutting down... Cleaning up resources.")
-        self._resetting = True  # Block incoming UI updates during tear-down
+        self._resetting = True 
 
-        # 1. Stop and deallocate UI Event Loop Timers
         if hasattr(self, "position_timer") and self.position_timer.isActive():
             self.position_timer.stop()
-        if hasattr(self, "_volume_timer") and self._volume_timer.isActive():
-            self._volume_timer.stop()
+        if hasattr(self, "_volume_timer"):
+            try:
+                if self._volume_timer.isActive():
+                    self._volume_timer.stop()
+            except Exception:
+                pass
 
-        # 2. Kill Active Download Worker Threads cleanly
         if self.worker and self.worker.isRunning():
             try:
                 self.worker.stop()
-                self.worker.wait() # Never use terminate() here anymore
+                self.worker.wait() 
             except Exception as e:
                 print(f"Error stopping download worker on exit: {e}")
 
-        # 3. Kill Active Preview Threads
         if self.preview_worker and self.preview_worker.isRunning():
             try:
                 self.preview_worker.stop()
@@ -995,33 +1158,29 @@ class AppWindow(QtWidgets.QWidget):
             except Exception as e:
                 print(f"Error stopping preview worker on exit: {e}")
 
-        # 4. Release Unmanaged Native C-Objects (VLC Media Player Structures)
         try:
             if hasattr(self, "player") and self.player is not None:
                 self.player.stop()
-                self.player.release()  # Decrements C-library reference tracker
+                self.player.release() 
                 self.player = None
                 
             if hasattr(self, "vlc_instance") and self.vlc_instance is not None:
-                self.vlc_instance.release()  # Completely flushes the libVLC core instance
+                self.vlc_instance.release() 
                 self.vlc_instance = None
         except Exception as e:
             print(f"Error releasing native VLC components on exit: {e}")
 
-        # Accept closure event and pass execution control back to the OS loop
         event.accept()
 
 def main(): 
-    # Configure logging to save structural errors, timestamps, and stack traces to a file
     logging.basicConfig(
         filename="youtube_to_mp3.log",
-        filemode="a",  # Append logs across multiple application sessions
+        filemode="a", 
         format="%(asctime)s [%(levelname)s] (%(threadName)s) %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
-        level=logging.ERROR  # Capture errors, exceptions, and critical structural bugs
+        level=logging.ERROR 
     )
     
-    # Also forward logs to standard console stream for real-time IDE debugging output
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s]: %(message)s"))
     logging.getLogger().addHandler(console_handler)

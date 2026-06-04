@@ -1,4 +1,4 @@
-# YouTube to MP3 Pro H
+# YouTube to MP3 Pro
 
 <p align="center">
   <img src="app_icon.ico" alt="Application Icon" width="128" height="128">
@@ -41,9 +41,9 @@
 ## 📁 Repository Structure
 
 ```text
-YouTube-To-MP3-ProH/
+YouTube-To-MP3-Pro/
 │
-├── youtube_to_mp3_proh.py   # Core UI & threading logic
+├── youtube_to_mp3_pro.py   # Core UI & threading logic
 ├── ffmpeg.exe               # Local media processing engine
 ├── requirements.txt         # Dependencies
 ├── app_icon.ico             # App icon asset
@@ -93,7 +93,7 @@ python -m pip install -r requirements.txt
 ### 5. Run Application
 
 ```bash
-python youtube_to_mp3_proh.py
+python youtube_to_mp3_pro.py
 ```
 
 ---
@@ -111,7 +111,7 @@ pip install pyinstaller
 ### Build Executable
 
 ```bash
-pyinstaller --onefile --windowed --icon=app_icon.ico --add-binary "ffmpeg.exe;." --name "YT-MP3" youtube_to_mp3_proh.py
+pyinstaller --onefile --windowed --icon=app_icon.ico --add-binary "ffmpeg.exe;." --name "YT-MP3" youtube_to_mp3_pro.py
 ```
 
 📁 Output will be generated in:
