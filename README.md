@@ -111,7 +111,7 @@ pip install pyinstaller
 ### Build Executable
 
 ```bash
-pyinstaller --onefile --windowed --icon=app_icon.ico --add-binary "ffmpeg.exe;." --name "YT-MP3" youtube_to_mp3_pro.py
+pyinstaller --onefile --windowed --icon=app_icon.ico --add-binary "ffmpeg.exe;." --add-data "app_icon.ico;." --name "YT-MP3 Pro" youtube_to_mp3_pro.py
 ```
 
 📁 Output will be generated in:
