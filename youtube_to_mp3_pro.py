@@ -79,8 +79,18 @@ def resolve_ffmpeg_path() -> str:
     return bundled_path
 
 FFMPEG_CMD = resolve_ffmpeg_path()
-ICON_PATH = "/mnt/data/app_icon.ico"
-SQUARE_THUMBNAIL_SIZE = 500 
+
+def resource_path(relative_path):
+    try:
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, relative_path)
+
+ICON_PATH = resource_path("app_icon.ico")
+
+SQUARE_THUMBNAIL_SIZE = 500
 
 # ==========================
 # UTILITY FUNCTIONS
@@ -1192,6 +1202,7 @@ def main():
         logging.getLogger().addHandler(logging.NullHandler())
 
     app = QtWidgets.QApplication(sys.argv) 
+    app.setWindowIcon(QtGui.QIcon(ICON_PATH))
     app.setFont(QtGui.QFont("Segoe UI", 10)) 
     win = AppWindow() 
     win.show() 
