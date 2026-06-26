@@ -1,7 +1,6 @@
 venv/
 __pycache__/
 *.pyc
-*.spec
 build/
 dist/
 youtube_to_mp3.log

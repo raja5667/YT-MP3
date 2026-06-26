@@ -24,7 +24,7 @@
 * 🏷️ **Smart Metadata Tagging** – Auto-fetches thumbnails and embeds them into MP3 ID3 tags.
 * 💎 **Modern UI/UX** – Neon animated interface with drag & drop URL support and live progress tracking.
 * 🧵 **Thread-Safe Cancellation** – Instantly stops downloads without freezing the UI.
-* 📦 **Zero Configuration Setup** – Bundled FFmpeg included; no system setup required.
+* 📦 **Zero Configuration Setup** – Bundled FFmpeg and VLC included; no system setup required for end users.
 
 ---
 
@@ -34,26 +34,28 @@
 * **Python:** 3.11 or 3.12
 * **Internet:** Required for YouTube access
 
-> ⚠️ **Warning:** Python 3.13+ or newer is not recommended due to potential compatibility issues with PyQt6 and PyInstaller.
+> ⚠️ **Warning:** Python 3.13+ is not recommended due to potential compatibility issues with PyQt6 and PyInstaller.
 
 ---
 
 ## 📁 Repository Structure
 
 ```text
-YouTube-To-MP3-Pro/
+YT-MP3/
 │
 ├── youtube_to_mp3_pro.py   # Core UI & threading logic
-├── ffmpeg.exe               # Local media processing engine
-├── requirements.txt         # Dependencies
-├── app_icon.ico             # App icon asset
-├── .gitignore               # Git exclusions
-└── README.md                # Documentation
+├── ffmpeg.exe              # Local media processing engine
+├── VLC/                    # Bundled VLC engine (libvlc.dll + plugins/)
+├── YT-MP3.spec             # PyInstaller build configuration
+├── requirements.txt        # Python dependencies
+├── app_icon.ico            # App icon asset
+├── .gitignore              # Git exclusions
+└── README.md               # Documentation
 ```
 
 ---
 
-## 🔧 Installation & Setup
+## 🔧 Installation & Setup (Development)
 
 ### 1. Clone Repository
 
@@ -62,24 +64,17 @@ git clone https://github.com/raja5667/YT-MP3.git
 cd YT-MP3
 ```
 
----
-
 ### 2. Create Virtual Environment
 
 ```bash
 python -m venv venv
 ```
 
----
-
 ### 3. Activate Environment
 
 ```bash
-# Windows
 venv\Scripts\activate
 ```
-
----
 
 ### 4. Install Dependencies
 
@@ -87,8 +82,6 @@ venv\Scripts\activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
-
----
 
 ### 5. Run Application
 
@@ -100,25 +93,29 @@ python youtube_to_mp3_pro.py
 
 ## 📦 Build Standalone EXE (PyInstaller)
 
-### Install PyInstaller
+This project uses a `.spec` file to bundle VLC, FFmpeg, and all dependencies into a **single portable `.exe`** — no installation required for end users.
+
+### Prerequisites
 
 ```bash
 pip install pyinstaller
 ```
 
----
-
 ### Build Executable
 
 ```bash
-pyinstaller --onefile --windowed --icon=app_icon.ico --add-binary "ffmpeg.exe;." --add-data "app_icon.ico;." --name "YT-MP3" youtube_to_mp3_pro.py
+pyinstaller YT-MP3.spec
 ```
 
-📁 Output will be generated in:
+📁 Output will be at:
 
 ```
-dist/
+dist/YT-MP3.exe
 ```
+
+> ✅ The output `.exe` is fully self-contained. Share only `dist/YT-MP3.exe` — users do **not** need Python, VLC, or FFmpeg installed.
+
+> ⚠️ Expected file size is **100–200 MB** due to bundled VLC plugins. This is normal.
 
 ---
 
@@ -136,6 +133,10 @@ Audio boost is applied via FFmpeg on a duplicated output stream to prevent corru
 
 All downloads run asynchronously with safe interruption handling to prevent UI freezing or crashes.
 
+### 📦 VLC Bundling
+
+VLC is bundled inside the exe via `YT-MP3.spec`. The app detects whether it is running frozen (compiled) or from source and resolves VLC paths accordingly using `sys._MEIPASS`.
+
 ---
 
 ## 📄 License
@@ -148,5 +149,3 @@ This project is licensed under the **MIT License**.
 
 **Raja**
 GitHub: [@raja5667](https://github.com/raja5667)
-
----

@@ -8,7 +8,25 @@ from yt_dlp import YoutubeDL
 import socket
 import logging
 import subprocess
+
+# ===== VLC Setup =====
+if getattr(sys, "frozen", False):
+    base_path = sys._MEIPASS  # ← use _MEIPASS, not dirname(executable)
+else:
+    base_path = os.path.dirname(os.path.abspath(__file__))
+
+vlc_path = os.path.join(base_path, "vlc")
+plugins_path = os.path.join(vlc_path, "plugins")
+
+os.environ["PYTHON_VLC_LIB_PATH"] = os.path.join(vlc_path, "libvlc.dll")
+os.environ["PYTHON_VLC_MODULE_PATH"] = plugins_path
+os.environ["VLC_PLUGIN_PATH"] = plugins_path  # ← add this, critical!
+
+if hasattr(os, "add_dll_directory") and os.path.isdir(vlc_path):
+    os.add_dll_directory(vlc_path)
+
 import vlc
+# =====================
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, pyqtProperty
@@ -614,8 +632,11 @@ class AppWindow(QtWidgets.QWidget):
             self.vlc_instance = vlc.Instance("--no-video")
             self.player = self.vlc_instance.media_player_new()
         except Exception as e:
-            print(f"Critical Error: VLC architecture mismatch or not installed: {e}")
-            QtWidgets.QMessageBox.critical(self, "VLC Error", "VLC Engine initialization failed. Make sure VLC 64-bit is installed.")
+            QtWidgets.QMessageBox.critical(
+                self,
+                "VLC Error",
+                f"Failed to load the bundled VLC engine.\n\n{e}"
+            )
             sys.exit(1)
 
         self.position_timer = QTimer()
