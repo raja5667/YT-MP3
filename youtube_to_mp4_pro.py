@@ -39,7 +39,7 @@ from PyQt6.QtWidgets import QLabel
 DEFAULT_OUTPUT_DIR = Path.home() / "Downloads"
 DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-VIDEO_QUALITIES = ["Best Available", "1080p", "720p", "480p", "360p", "240p", "144p"]
+VIDEO_QUALITIES = ["Best Available", "4K (2160p)", "1440p", "1080p", "720p", "480p", "360p", "240p", "144p"]
 
 # Format strings explained:
 #   1. Prefer best video (any codec) + best audio, merged to mp4 via ffmpeg
@@ -48,33 +48,75 @@ VIDEO_QUALITIES = ["Best Available", "1080p", "720p", "480p", "360p", "240p", "1
 # Including webm/vp9 in the chain is critical — YouTube serves 1080p+ almost
 # exclusively as webm. Without it, yt-dlp silently downgrades to 720p mp4.
 QUALITY_FORMAT_MAP = {
+    # Best Available: grab the absolute best video + best audio and merge.
     "Best Available": (
         "bestvideo+bestaudio/best"
     ),
-    "1080p": (
-        "bestvideo[height<=1080]+bestaudio/bestvideo[height<=1080]+bestaudio[ext=m4a]"
-        "/best[height<=1080]/bestvideo[height<=1080]/best"
+    # 4K (2160p): YouTube serves 4K only as VP9/AV1 webm — ffmpeg merges to mp4.
+    # No height floor so it always falls back gracefully if 4K is not available.
+    "4K (2160p)": (
+        "bestvideo[height<=2160]+bestaudio"
+        "/best[height<=2160]"
+        "/bestvideo+bestaudio"
+        "/best"
     ),
+    # 1440p: VP9 webm only at this tier; always falls back cleanly.
+    "1440p": (
+        "bestvideo[height<=1440]+bestaudio"
+        "/best[height<=1440]"
+        "/bestvideo+bestaudio"
+        "/best"
+    ),
+    # 1080p: prefer VP9 webm (higher quality than AVC mp4 at same resolution).
+    "1080p": (
+        "bestvideo[height<=1080]+bestaudio"
+        "/best[height<=1080]"
+        "/bestvideo+bestaudio"
+        "/best"
+    ),
+    # 720p and below: AVC mp4 streams exist; prefer mp4+m4a for compatibility.
     "720p": (
-        "bestvideo[height<=720]+bestaudio/bestvideo[height<=720]+bestaudio[ext=m4a]"
-        "/best[height<=720]/bestvideo[height<=720]/best"
+        "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]"
+        "/bestvideo[height<=720]+bestaudio"
+        "/best[height<=720]"
+        "/best"
     ),
     "480p": (
-        "bestvideo[height<=480]+bestaudio/bestvideo[height<=480]+bestaudio[ext=m4a]"
-        "/best[height<=480]/bestvideo[height<=480]/best"
+        "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]"
+        "/bestvideo[height<=480]+bestaudio"
+        "/best[height<=480]"
+        "/best"
     ),
     "360p": (
-        "bestvideo[height<=360]+bestaudio/bestvideo[height<=360]+bestaudio[ext=m4a]"
-        "/best[height<=360]/bestvideo[height<=360]/best"
+        "bestvideo[height<=360][ext=mp4]+bestaudio[ext=m4a]"
+        "/bestvideo[height<=360]+bestaudio"
+        "/best[height<=360]"
+        "/best"
     ),
     "240p": (
-        "bestvideo[height<=240]+bestaudio/bestvideo[height<=240]+bestaudio[ext=m4a]"
-        "/best[height<=240]/bestvideo[height<=240]/best"
+        "bestvideo[height<=240][ext=mp4]+bestaudio[ext=m4a]"
+        "/bestvideo[height<=240]+bestaudio"
+        "/best[height<=240]"
+        "/best"
     ),
     "144p": (
-        "bestvideo[height<=144]+bestaudio/bestvideo[height<=144]+bestaudio[ext=m4a]"
-        "/best[height<=144]/bestvideo[height<=144]/best"
+        "bestvideo[height<=144][ext=mp4]+bestaudio[ext=m4a]"
+        "/bestvideo[height<=144]+bestaudio"
+        "/best[height<=144]"
+        "/best"
     ),
+}
+
+# Map quality label to expected max height, used to detect fallback situations
+QUALITY_HEIGHT_MAP = {
+    "4K (2160p)": 2160,
+    "1440p": 1440,
+    "1080p": 1080,
+    "720p": 720,
+    "480p": 480,
+    "360p": 360,
+    "240p": 240,
+    "144p": 144,
 }
 
 def resolve_ffmpeg_path() -> str:
@@ -173,8 +215,8 @@ class NeonFrame(QtWidgets.QFrame):
 # THUMBNAIL LOADER THREAD
 # ==========================
 class ThumbnailLoader(QThread):
-    """Fetches video info (duration + thumbnail URL + title) in background."""
-    info_ready = pyqtSignal(int, str, str)   # duration, thumbnail_url, title
+    """Fetches video info (duration + thumbnail URL + title + available heights) in background."""
+    info_ready = pyqtSignal(int, str, str, list)  # duration, thumbnail_url, title, available_heights
     error      = pyqtSignal(str)
 
     def __init__(self, url: str):
@@ -194,7 +236,13 @@ class ThumbnailLoader(QThread):
                 dur   = int(info.get("duration", 0) or 0)
                 thumb = info.get("thumbnail", "")
                 title = info.get("title", "")
-                self.info_ready.emit(dur, thumb, title)
+                # Collect all unique heights available for this video
+                heights = set()
+                for fmt in info.get("formats", []):
+                    h = fmt.get("height")
+                    if h:
+                        heights.add(int(h))
+                self.info_ready.emit(dur, thumb, title, sorted(heights, reverse=True))
         except Exception as e:
             self.error.emit(str(e))
 
@@ -690,6 +738,9 @@ class VideoDownloadWorker(QtCore.QThread):
             def warning(self, msg): pass
             def error(self, msg): pass
 
+        # Track whether we already showed the fallback warning this download
+        _fallback_warned = {"shown": False}
+
         def hook(d):
             if self._stop:
                 raise Exception("Download cancelled by user.")
@@ -700,8 +751,22 @@ class VideoDownloadWorker(QtCore.QThread):
                 downloaded = d.get("downloaded_bytes", 0) or 0
                 total      = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
                 # Show actual resolution being downloaded
-                height = d.get("info_dict", {}).get("height") or ""
+                height = d.get("info_dict", {}).get("height") or 0
                 res_tag = f" [{height}p]" if height else ""
+
+                # Warn once if actual quality is lower than what was requested
+                requested_h = QUALITY_HEIGHT_MAP.get(self.quality, 0)
+                if (not _fallback_warned["shown"]
+                        and requested_h > 0
+                        and height
+                        and int(height) < requested_h):
+                    _fallback_warned["shown"] = True
+                    self.status.emit(
+                        f"⚠️  {self.quality} not available for this video. "
+                        f"Downloading best available [{height}p] instead..."
+                    )
+                    return  # let user read the message before progress overwrites it
+
                 if total > 0:
                     pct = (downloaded / total) * 100
                     speed = d.get("speed") or 0
@@ -729,7 +794,21 @@ class VideoDownloadWorker(QtCore.QThread):
 
         opts = {
             "format": fmt,
+            # Sort candidates: prefer higher resolution, then higher bitrate,
+            # then vp9/av1 codec (better quality per bit than avc on YouTube).
+            # This ensures yt-dlp picks the best quality stream when multiple
+            # formats match the height filter.
+            "format_sort": ["res", "br", "vcodec:vp9", "vcodec:av01", "vcodec:avc1"],
             "merge_output_format": "mp4",
+            # Explicitly invoke the FFmpeg merger so the video+audio streams are
+            # always combined into a single mp4 — without this, yt-dlp can silently
+            # skip the merge step and produce a video-only file.
+            "postprocessors": [
+                {
+                    "key": "FFmpegVideoConvertor",
+                    "preferedformat": "mp4",
+                }
+            ],
             "user_agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -1125,7 +1204,7 @@ class VideoAppWindow(QtWidgets.QWidget):
         self._info_thread.error.connect(self._on_info_error)
         self._info_thread.start()
 
-    def _on_info_ready(self, duration: int, thumb_url: str, title: str):
+    def _on_info_ready(self, duration: int, thumb_url: str, title: str, available_heights: list):
         # Duration
         if duration > 0:
             self._video_duration = duration
@@ -1144,6 +1223,35 @@ class VideoAppWindow(QtWidgets.QWidget):
         if title:
             display = title if len(title) <= 62 else title[:59] + "…"
             self.lbl_video_title.setText(display)
+
+        # Enable / disable quality options based on what the video actually has.
+        # A quality tier is enabled if at least one format matches its max height.
+        # "Best Available" is always enabled.
+        if available_heights:
+            max_available = max(available_heights)
+            model = self.quality_combo.model()
+            for i in range(self.quality_combo.count()):
+                label = self.quality_combo.itemText(i)
+                if label == "Best Available":
+                    item_enabled = True
+                else:
+                    req_h = QUALITY_HEIGHT_MAP.get(label, 0)
+                    # Enable the tier if the video has a stream at or above that height,
+                    # meaning the video can fulfil this quality level.
+                    item_enabled = max_available >= req_h
+                item = model.item(i)
+                if item:
+                    item.setEnabled(item_enabled)
+                    # Dim disabled items visually
+                    item.setForeground(
+                        QtGui.QColor("#FFFFFF") if item_enabled else QtGui.QColor("#555870")
+                    )
+            # If currently selected quality is now disabled, switch to Best Available
+            current_label = self.quality_combo.currentText()
+            if current_label != "Best Available":
+                req_h = QUALITY_HEIGHT_MAP.get(current_label, 0)
+                if max_available < req_h:
+                    self.quality_combo.setCurrentIndex(0)  # Best Available
 
         # Build timestamps for filmstrip inside the slider
         if duration > 0:
@@ -1215,6 +1323,13 @@ class VideoAppWindow(QtWidgets.QWidget):
         self.lbl_end_time.setText("00:00:00")
         self.range_slider.set_duration(1)
         self.range_slider.set_placeholder()
+        # Re-enable all quality options when URL is cleared
+        model = self.quality_combo.model()
+        for i in range(self.quality_combo.count()):
+            item = model.item(i)
+            if item:
+                item.setEnabled(True)
+                item.setForeground(QtGui.QColor("#FFFFFF"))
 
     # ------------------------------------------------------------------
     # Range slider callback
