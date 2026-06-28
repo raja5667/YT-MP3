@@ -39,7 +39,7 @@ from PyQt6.QtWidgets import QLabel
 DEFAULT_OUTPUT_DIR = Path.home() / "Downloads"
 DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-VIDEO_QUALITIES = ["Best Available", "4K (2160p)", "1440p", "1080p", "720p", "480p", "360p", "240p", "144p"]
+VIDEO_QUALITIES = ["Best Available", "1080p", "720p", "480p", "360p", "240p", "144p"]
 
 # Format strings explained:
 #   1. Prefer best video (any codec) + best audio, merged to mp4 via ffmpeg
@@ -130,8 +130,94 @@ def resolve_ffmpeg_path() -> str:
 
 FFMPEG_CMD = resolve_ffmpeg_path()
 
+
+def resolve_deno_path() -> str:
+    """Find deno.exe — beside the EXE (_MEIPASS when frozen) or beside the script."""
+    system_deno = shutil.which("deno")
+    if system_deno:
+        return system_deno
+    binary_name = "deno.exe" if os.name == "nt" else "deno"
+    if getattr(sys, "frozen", False):
+        return os.path.join(sys._MEIPASS, binary_name)
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), binary_name)
+
+DENO_CMD = resolve_deno_path()
+
+
 def check_ffmpeg() -> bool:
     return shutil.which("ffmpeg") is not None or os.path.exists(FFMPEG_CMD)
+
+
+# ---------------------------------------------------------------------------
+# Cookie helpers — needed so YouTube serves 1080p+ in the frozen EXE
+# ---------------------------------------------------------------------------
+
+def _cookies_txt_path() -> str:
+    """
+    Find cookies.txt. In a frozen onefile EXE:
+      - sys.executable = path to the .exe
+      - sys._MEIPASS   = temp extraction dir (bundled files live here)
+      - __file__       = also inside _MEIPASS, NOT beside the exe
+    So we check exe dir first, then _MEIPASS (bundled fallback).
+    """
+    candidates = []
+    if getattr(sys, "frozen", False):
+        exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+        candidates.append(os.path.join(exe_dir, "cookies.txt"))
+        if hasattr(sys, "_MEIPASS"):
+            candidates.append(os.path.join(sys._MEIPASS, "cookies.txt"))
+    else:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        candidates.append(os.path.join(script_dir, "cookies.txt"))
+        candidates.append(os.path.join(os.getcwd(), "cookies.txt"))
+    for p in candidates:
+        try:
+            if os.path.isfile(p) and os.path.getsize(p) > 100:
+                return p
+        except Exception:
+            pass
+    return ""
+
+
+_COOKIE_OPTS: dict = None
+
+
+def cookie_opts() -> dict:
+    """
+    Return yt-dlp cookie options. NEVER raises — always returns a plain dict.
+    Only checks for cookies.txt — no live browser probing that can throw.
+    """
+    global _COOKIE_OPTS
+    if _COOKIE_OPTS is not None:
+        return _COOKIE_OPTS
+    try:
+        txt = _cookies_txt_path()
+        if txt:
+            _COOKIE_OPTS = {"cookiefile": txt}
+            return _COOKIE_OPTS
+    except Exception:
+        pass
+    _COOKIE_OPTS = {}
+    return _COOKIE_OPTS
+
+
+def deno_opts() -> dict:
+    """
+    Return yt-dlp opts to unlock all YouTube formats.
+    Uses bundled deno + EJS scripts from yt-dlp-ejs package.
+    """
+    opts = {}
+    try:
+        if os.path.exists(DENO_CMD):
+            opts["js_runtimes"] = {"deno": {"path": DENO_CMD}}
+    except Exception:
+        pass
+    try:
+        opts["remote_components"] = {"ejs": "github"}
+    except Exception:
+        pass
+    return opts
+
 
 def check_internet(timeout=3) -> bool:
     try:
@@ -225,11 +311,18 @@ class ThumbnailLoader(QThread):
 
     def run(self):
         try:
+            extra = {}
+            try:
+                extra.update(cookie_opts())
+                extra.update(deno_opts())
+            except Exception:
+                pass
             opts = {
                 "quiet": True,
                 "skip_download": True,
                 "no_warnings": True,
                 "noplaylist": True,
+                **extra,
             }
             with YoutubeDL(opts) as ydl:
                 info  = ydl.extract_info(self.url, download=False)
@@ -281,12 +374,19 @@ class StreamUrlFetcher(QThread):
 
     def run(self):
         try:
+            extra2 = {}
+            try:
+                extra2.update(cookie_opts())
+                extra2.update(deno_opts())
+            except Exception:
+                pass
             opts = {
                 "quiet": True,
                 "skip_download": True,
                 "no_warnings": True,
                 "noplaylist": True,
                 "format": "bestvideo[height<=480][ext=mp4]/bestvideo[height<=480]/best[height<=480]/best",
+                **extra2,
             }
             with YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(self.page_url, download=False)
@@ -814,6 +914,8 @@ class VideoDownloadWorker(QtCore.QThread):
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
                 "Chrome/120.0.0.0 Safari/537.36"
             ),
+            **cookie_opts(),
+            **deno_opts(),
             "outtmpl": outtmpl,
             "noplaylist": True,
             "quiet": True,
@@ -1224,34 +1326,13 @@ class VideoAppWindow(QtWidgets.QWidget):
             display = title if len(title) <= 62 else title[:59] + "…"
             self.lbl_video_title.setText(display)
 
-        # Enable / disable quality options based on what the video actually has.
-        # A quality tier is enabled if at least one format matches its max height.
-        # "Best Available" is always enabled.
-        if available_heights:
-            max_available = max(available_heights)
-            model = self.quality_combo.model()
-            for i in range(self.quality_combo.count()):
-                label = self.quality_combo.itemText(i)
-                if label == "Best Available":
-                    item_enabled = True
-                else:
-                    req_h = QUALITY_HEIGHT_MAP.get(label, 0)
-                    # Enable the tier if the video has a stream at or above that height,
-                    # meaning the video can fulfil this quality level.
-                    item_enabled = max_available >= req_h
-                item = model.item(i)
-                if item:
-                    item.setEnabled(item_enabled)
-                    # Dim disabled items visually
-                    item.setForeground(
-                        QtGui.QColor("#FFFFFF") if item_enabled else QtGui.QColor("#555870")
-                    )
-            # If currently selected quality is now disabled, switch to Best Available
-            current_label = self.quality_combo.currentText()
-            if current_label != "Best Available":
-                req_h = QUALITY_HEIGHT_MAP.get(current_label, 0)
-                if max_available < req_h:
-                    self.quality_combo.setCurrentIndex(0)  # Best Available
+        # Always enable all quality options — yt-dlp picks best available at download time
+        model = self.quality_combo.model()
+        for i in range(self.quality_combo.count()):
+            item = model.item(i)
+            if item:
+                item.setEnabled(True)
+                item.setForeground(QtGui.QColor("#FFFFFF"))
 
         # Build timestamps for filmstrip inside the slider
         if duration > 0:

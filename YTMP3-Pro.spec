@@ -8,6 +8,10 @@ block_cipher = None
 # and all downloader/postprocessor/networking modules. Without collect_all,
 # PyInstaller misses them and yt_dlp silently falls back to lowest quality.
 yt_dlp_datas, yt_dlp_binaries, yt_dlp_hiddenimports = collect_all('yt_dlp')
+try:
+    ejs_datas, ejs_binaries, ejs_hiddenimports = collect_all('yt_dlp_ejs')
+except Exception:
+    ejs_datas, ejs_binaries, ejs_hiddenimports = [], [], []
 
 a = Analysis(
     ['main.py'],                        # ← entry point is main.py
@@ -18,14 +22,20 @@ a = Analysis(
     datas=[
         ('VLC', 'vlc'),                 # Bundle VLC folder
         ('ffmpeg.exe', '.'),            # Bundle FFmpeg
+        ('deno.exe', '.'),              # Bundle Deno (JS runtime)
         ('app_icon.ico', '.'),          # Bundle icon
         ('youtube_to_mp3_pro.py', '.'), # Bundle MP3 module
         ('youtube_to_mp4_pro.py', '.'), # Bundle MP4 module
         *yt_dlp_datas,                  # All yt_dlp data files (extractors, etc.)
+        *ejs_datas,                     # yt-dlp-ejs JS challenge solver scripts
+        ('cookies.txt', '.'),           # YouTube cookies for auth
     ],
     hiddenimports=[
         # yt_dlp — full dynamic extractor tree (fixes quality fallback in exe)
         *yt_dlp_hiddenimports,
+        *ejs_hiddenimports,
+        'yt_dlp_ejs',
+        *collect_submodules('yt_dlp_ejs'),
         *collect_submodules('yt_dlp'),
         *collect_submodules('yt_dlp.extractor'),
         *collect_submodules('yt_dlp.downloader'),
