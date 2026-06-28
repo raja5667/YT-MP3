@@ -1,9 +1,9 @@
-# YouTube to MP3 Pro
+# YTMP3 Pro Suite
 
 <p align="center">
   <img src="app_icon.ico" alt="Application Icon" width="128" height="128">
   <br>
-  <b>An advanced, asynchronous PyQt6 desktop application designed for high-fidelity YouTube audio extraction and media management.</b>
+  <b>An advanced, asynchronous PyQt6 desktop suite for high-fidelity YouTube audio and video extraction.</b>
 </p>
 
 <p align="center">
@@ -17,14 +17,24 @@
 
 ## 🚀 Key Features
 
-* 🎵 **High-Fidelity Audio Extraction** – Converts YouTube audio streams into pure 320kbps MP3 format.
-* ▶️ **Live Audio Preview Engine** – Built-in VLC-based asynchronous preview before download.
-* 📂 **Advanced Playlist Processing** – Handles full playlists with sequential queue management.
-* 🔊 **Dynamic Audio Boost** – FFmpeg-powered real-time gain control (100%–200% safe amplification).
-* 🏷️ **Smart Metadata Tagging** – Auto-fetches thumbnails and embeds them into MP3 ID3 tags.
-* 💎 **Modern UI/UX** – Neon animated interface with drag & drop URL support and live progress tracking.
-* 🧵 **Thread-Safe Cancellation** – Instantly stops downloads without freezing the UI.
-* 📦 **Zero Configuration Setup** – Bundled FFmpeg and VLC included; no system setup required for end users.
+### 🎵 MP3 Downloader
+* **High-Fidelity Audio Extraction** – Converts YouTube audio streams into pure 320kbps MP3 format.
+* **Live Audio Preview Engine** – Built-in VLC-based asynchronous preview before download.
+* **Advanced Playlist Processing** – Handles full playlists with sequential queue management.
+* **Dynamic Audio Boost** – FFmpeg-powered real-time gain control (100%–200% safe amplification).
+* **Smart Metadata Tagging** – Auto-fetches thumbnails and embeds them into MP3 ID3 tags.
+
+### 🎬 MP4 Downloader
+* **High-Quality Video Download** – Supports Best Available, 1080p, 720p, 480p, 360p, 144p.
+* **Video Trim Panel** – Dual-handle range slider to trim video before downloading via FFmpeg.
+* **Thumbnail Preview** – Live seek-based thumbnail preview from the video timeline.
+* **Silent FFmpeg Processing** – No terminal window pops up during processing.
+
+### 💎 General
+* **Tabbed Interface** – Single window launcher switching between MP3 and MP4 tools.
+* **Modern UI/UX** – Neon animated interface with drag & drop URL support and live progress tracking.
+* **Thread-Safe Cancellation** – Instantly stops downloads without freezing the UI.
+* **Zero Configuration** – Bundled FFmpeg and VLC; no system setup required for end users.
 
 ---
 
@@ -43,10 +53,12 @@
 ```text
 YT-MP3/
 │
-├── youtube_to_mp3_pro.py   # Core UI & threading logic
+├── main.py                 # App launcher — tabbed MP3 + MP4 interface
+├── youtube_to_mp3_pro.py   # MP3 downloader UI & logic
+├── youtube_to_mp4_pro.py   # MP4 downloader UI & logic
 ├── ffmpeg.exe              # Local media processing engine
 ├── VLC/                    # Bundled VLC engine (libvlc.dll + plugins/)
-├── YT-MP3.spec             # PyInstaller build configuration
+├── YTMP3-Pro.spec          # PyInstaller build configuration
 ├── requirements.txt        # Python dependencies
 ├── app_icon.ico            # App icon asset
 ├── .gitignore              # Git exclusions
@@ -86,7 +98,7 @@ python -m pip install -r requirements.txt
 ### 5. Run Application
 
 ```bash
-python youtube_to_mp3_pro.py
+python main.py
 ```
 
 ---
@@ -104,16 +116,16 @@ pip install pyinstaller
 ### Build Executable
 
 ```bash
-pyinstaller YT-MP3.spec
+pyinstaller YTMP3-Pro.spec
 ```
 
 📁 Output will be at:
 
 ```
-dist/YT-MP3.exe
+dist/YTMP3-Pro.exe
 ```
 
-> ✅ The output `.exe` is fully self-contained. Share only `dist/YT-MP3.exe` — users do **not** need Python, VLC, or FFmpeg installed.
+> ✅ The output `.exe` is fully self-contained. Share only `dist/YTMP3-Pro.exe` — users do **not** need Python, VLC, or FFmpeg installed.
 
 > ⚠️ Expected file size is **100–200 MB** due to bundled VLC plugins. This is normal.
 
@@ -135,7 +147,11 @@ All downloads run asynchronously with safe interruption handling to prevent UI f
 
 ### 📦 VLC Bundling
 
-VLC is bundled inside the exe via `YT-MP3.spec`. The app detects whether it is running frozen (compiled) or from source and resolves VLC paths accordingly using `sys._MEIPASS`.
+VLC is bundled inside the exe via `YTMP3-Pro.spec`. The app detects whether it is running frozen (compiled) or from source and resolves VLC paths accordingly using `sys._MEIPASS`. The VLC setup runs once in `main.py` before either module is imported.
+
+### 🔇 Silent FFmpeg
+
+All FFmpeg subprocess calls use `CREATE_NO_WINDOW` and `STARTUPINFO` flags to suppress terminal windows during video trimming and thumbnail extraction.
 
 ---
 
@@ -147,5 +163,5 @@ This project is licensed under the **MIT License**.
 
 ## 👨‍💻 Author
 
-**Raja**
+**Dhrubajyoti Das**
 GitHub: [@raja5667](https://github.com/raja5667)
