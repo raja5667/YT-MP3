@@ -385,7 +385,9 @@ class MainWindow(QtWidgets.QWidget):
             "font-size: 11px; padding-right: 8px; cursor: pointer;"
         )
         self._status_lbl.setCursor(Qt.CursorShape.PointingHandCursor)
-        tab_layout.addWidget(self._status_lbl)
+        ver_lbl = QtWidgets.QLabel(APP_VERSION)
+        ver_lbl.setStyleSheet("color: rgba(255,255,255,0.25); font-size: 11px; padding-right: 12px;")
+        tab_layout.addWidget(ver_lbl)
 
         root.addWidget(tab_bar)
 
