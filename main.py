@@ -32,7 +32,7 @@ from youtube_to_mp3_pro import AppWindow as MP3Window, resource_path, ICON_PATH
 from youtube_to_mp4_pro  import VideoAppWindow as MP4Window
 
 # ── App version ──────────────────────────────────────────────────────────────
-APP_VERSION      = "v2.0.2"
+APP_VERSION      = "v2.0.1"
 GITHUB_API_URL   = "https://api.github.com/repos/raja5667/YT-MP3/releases/latest"
 DOWNLOAD_PAGE    = "https://www.youtubemp3proh.dpdns.org/download.html"
 # ─────────────────────────────────────────────────────────────────────────────
