@@ -32,7 +32,7 @@ from youtube_to_mp3_pro import AppWindow as MP3Window, resource_path, ICON_PATH
 from youtube_to_mp4_pro  import VideoAppWindow as MP4Window
 
 # ── App version ──────────────────────────────────────────────────────────────
-APP_VERSION      = "v2.0.2"
+APP_VERSION      = "v2.0.1"
 GITHUB_API_URL   = "https://api.github.com/repos/raja5667/YT-MP3/releases/latest"
 DOWNLOAD_PAGE    = "https://www.youtubemp3proh.dpdns.org/download.html"
 # ─────────────────────────────────────────────────────────────────────────────
@@ -385,6 +385,8 @@ class MainWindow(QtWidgets.QWidget):
             "font-size: 11px; padding-right: 8px; cursor: pointer;"
         )
         self._status_lbl.setCursor(Qt.CursorShape.PointingHandCursor)
+        tab_layout.addWidget(self._status_lbl)
+
         ver_lbl = QtWidgets.QLabel(APP_VERSION)
         ver_lbl.setStyleSheet("color: rgba(255,255,255,0.25); font-size: 11px; padding-right: 12px;")
         tab_layout.addWidget(ver_lbl)
