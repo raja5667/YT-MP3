@@ -119,7 +119,10 @@ class AppUpdateChecker(QtCore.QThread):
                     break
 
             # Compare versions — emit only if newer
-            if latest_tag != APP_VERSION:
+            def parse(v):
+                return [int(x) for x in v.lstrip("v").split(".")]
+
+            if parse(latest_tag) > parse(APP_VERSION):
                 self.update_available.emit(latest_tag, exe_url)
 
         except Exception:
