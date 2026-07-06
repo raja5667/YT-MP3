@@ -6,7 +6,6 @@ import urllib.request
 import urllib.error
 import json
 import pathlib
-import winreg
 
 # ===== VLC Setup (must happen before importing vlc) =====
 if getattr(sys, "frozen", False):
@@ -59,51 +58,6 @@ TAB_INACTIVE = """
 TAB_BAR_H  = 42
 MP3_H      = 500
 MP4_H      = 500
-
-
-# ── Background update watcher registration ──────────────────────────────────
-DATA_DIR       = os.path.join(os.getenv("LOCALAPPDATA", "."), "YTMP3Pro")
-INSTALLED_FILE = os.path.join(DATA_DIR, "installed_version.txt")
-RUN_KEY_NAME   = "YTMP3ProUpdateWatcher"
-
-
-def _record_installed_version():
-    """Let the background watcher know what version is actually installed,
-    so it never notifies about an update the user already has."""
-    try:
-        os.makedirs(DATA_DIR, exist_ok=True)
-        with open(INSTALLED_FILE, "w") as f:
-            f.write(APP_VERSION)
-    except Exception:
-        pass
-
-
-def _register_startup_watcher():
-    """Add (or refresh) a registry Run entry so YTMP3-Updater.exe launches
-    silently at Windows login. Safe to call every time the app starts —
-    it just overwrites the same value, no duplicate entries."""
-    if sys.platform != "win32":
-        return
-    try:
-        if getattr(sys, "frozen", False):
-            app_dir = os.path.dirname(sys.executable)
-        else:
-            app_dir = os.path.dirname(os.path.abspath(__file__))
-
-        updater_path = os.path.join(app_dir, "YTMP3-Updater.exe")
-        if not os.path.exists(updater_path):
-            return  # updater not shipped alongside this build — skip silently
-
-        key = winreg.OpenKey(
-            winreg.HKEY_CURRENT_USER,
-            r"Software\Microsoft\Windows\CurrentVersion\Run",
-            0, winreg.KEY_SET_VALUE,
-        )
-        winreg.SetValueEx(key, RUN_KEY_NAME, 0, winreg.REG_SZ, f'"{updater_path}"')
-        winreg.CloseKey(key)
-    except Exception:
-        pass  # never let startup registration crash the app
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 # ── yt-dlp auto-updater ──────────────────────────────────────────────────────
@@ -514,9 +468,6 @@ def main():
         print("Logging initialized.")
     else:
         logging.getLogger().addHandler(logging.NullHandler())
-
-    _record_installed_version()
-    _register_startup_watcher()
 
     app = QtWidgets.QApplication(sys.argv)
     app.setWindowIcon(QtGui.QIcon(ICON_PATH))
