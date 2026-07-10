@@ -35,6 +35,7 @@ from youtube_to_mp4_pro  import VideoAppWindow as MP4Window
 APP_VERSION      = "v2.0.1"
 GITHUB_API_URL   = "https://api.github.com/repos/raja5667/YT-MP3/releases/latest"
 DOWNLOAD_PAGE    = "https://www.youtubemp3proh.dpdns.org/download.html"
+GITHUB_REPO_URL  = "https://github.com/raja5667/YT-MP3"
 # ─────────────────────────────────────────────────────────────────────────────
 
 TAB_ACTIVE = """
@@ -326,6 +327,185 @@ class UpdateDialog(QtWidgets.QDialog):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+# ── Rating prompt: persistence + UI ──────────────────────────────────────────
+class RatingManager:
+    """
+    Tracks how many successful downloads a user has made (persisted across app
+    restarts via QSettings — on Windows this lives in the registry, so it
+    survives even for a onefile PyInstaller exe with no writable install folder).
+
+    Rules:
+      - Every successful (non-cancelled) MP3 or MP4 download counts toward the total.
+      - Counts accumulate across separate app sessions (open app, download 2,
+        close, reopen later, download 3 more -> total is 5 -> prompt fires).
+      - If the user taps "Maybe Later", the prompt is pushed back by
+        RE_PROMPT_INTERVAL more downloads instead of disappearing forever.
+      - Once the user gives ANY rating (1-5 stars), we never ask again.
+    """
+
+    ORG  = "YTMP3Pro"
+    APP  = "YTMP3Pro"
+    INITIAL_THRESHOLD  = 5   # ask after this many downloads, first time
+    RE_PROMPT_INTERVAL = 5   # if they say "later", ask again after this many more
+
+    def __init__(self):
+        self.settings = QtCore.QSettings(self.ORG, self.APP)
+
+    def has_rated(self) -> bool:
+        return bool(self.settings.value("rating_given", False, type=bool))
+
+    def record_download(self) -> bool:
+        """
+        Call this once per successful download. Returns True if the rating
+        dialog should be shown right now.
+        """
+        if self.has_rated():
+            return False
+
+        count = self.settings.value("download_count", 0, type=int) + 1
+        self.settings.setValue("download_count", count)
+
+        next_prompt_at = self.settings.value(
+            "next_prompt_at", self.INITIAL_THRESHOLD, type=int
+        )
+        self.settings.sync()
+
+        return count >= next_prompt_at
+
+    def mark_rated(self):
+        self.settings.setValue("rating_given", True)
+        self.settings.sync()
+
+    def remind_later(self):
+        """Push the next prompt out by RE_PROMPT_INTERVAL more downloads."""
+        count = self.settings.value("download_count", 0, type=int)
+        self.settings.setValue("next_prompt_at", count + self.RE_PROMPT_INTERVAL)
+        self.settings.sync()
+
+
+class StarRatingWidget(QtWidgets.QWidget):
+    """Row of 5 clickable stars with hover fill preview."""
+
+    rated = QtCore.pyqtSignal(int)  # 1-5
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QtWidgets.QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+
+        self._buttons = []
+        for i in range(1, 6):
+            btn = QtWidgets.QPushButton("★")
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setFixedSize(42, 42)
+            btn.setStyleSheet(self._style(False))
+            btn.installEventFilter(self)
+            btn.clicked.connect(lambda _checked, n=i: self.rated.emit(n))
+            layout.addWidget(btn)
+            self._buttons.append(btn)
+
+    def _style(self, filled: bool) -> str:
+        color = "#facc15" if filled else "rgba(255,255,255,0.25)"
+        return (
+            f"QPushButton {{ background: transparent; border: none; "
+            f"font-size: 28px; color: {color}; }}"
+        )
+
+    def _fill_up_to(self, n: int):
+        for i, btn in enumerate(self._buttons, start=1):
+            btn.setStyleSheet(self._style(i <= n))
+
+    def eventFilter(self, obj, event):
+        if obj in self._buttons:
+            idx = self._buttons.index(obj) + 1
+            if event.type() == QtCore.QEvent.Type.Enter:
+                self._fill_up_to(idx)
+            elif event.type() == QtCore.QEvent.Type.Leave:
+                self._fill_up_to(0)
+        return super().eventFilter(obj, event)
+
+
+class RatingDialog(QtWidgets.QDialog):
+    """
+    Rating prompt with a normal close button + a 'Maybe Later' option.
+    Tapping any star records the rating (so it never shows again) and opens
+    the GitHub repo so the user can drop a star there too. Closing without
+    rating (X button, Escape, or 'Maybe Later') just postpones the next ask.
+    """
+
+    def __init__(self, rating_manager: "RatingManager", parent=None):
+        super().__init__(parent)
+        self.rating_manager = rating_manager
+        self._rated = False
+
+        self.setWindowTitle("Rate YTMP3 Pro")
+        self.setFixedWidth(380)
+        self.setModal(True)
+        self.setStyleSheet("""
+            QDialog { background: #0f1117; color: white; }
+            QLabel  { color: white; }
+        """)
+        self._build_ui()
+
+    def _build_ui(self):
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(28, 26, 28, 20)
+        layout.setSpacing(16)
+
+        icon_lbl = QtWidgets.QLabel("⭐")
+        icon_lbl.setStyleSheet("font-size: 32px;")
+        icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(icon_lbl)
+
+        title_lbl = QtWidgets.QLabel("Enjoying YTMP3 Pro?")
+        title_lbl.setStyleSheet("font-size: 16px; font-weight: 700;")
+        title_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title_lbl)
+
+        msg_lbl = QtWidgets.QLabel(
+            "You've downloaded several files with YTMP3 Pro!\nPlease tap a star to rate the app."
+        )
+        msg_lbl.setStyleSheet("font-size: 12.5px; color: rgba(255,255,255,0.65);")
+        msg_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        msg_lbl.setWordWrap(True)
+        layout.addWidget(msg_lbl)
+
+        self.stars = StarRatingWidget()
+        stars_row = QtWidgets.QHBoxLayout()
+        stars_row.addStretch()
+        stars_row.addWidget(self.stars)
+        stars_row.addStretch()
+        layout.addLayout(stars_row)
+
+        self.stars.rated.connect(self._on_rated)
+
+        self.btn_later = QtWidgets.QPushButton("Maybe Later")
+        self.btn_later.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_later.setStyleSheet("""
+            QPushButton {
+                background: transparent; color: rgba(255,255,255,0.45);
+                border: none; font-size: 12px; padding: 6px;
+            }
+            QPushButton:hover { color: white; }
+        """)
+        self.btn_later.clicked.connect(self.close)
+        layout.addWidget(self.btn_later, alignment=Qt.AlignmentFlag.AlignCenter)
+
+    def _on_rated(self, stars: int):
+        self._rated = True
+        self.rating_manager.mark_rated()
+        QtGui.QDesktopServices.openUrl(QtCore.QUrl(GITHUB_REPO_URL))
+        self.accept()
+
+    def closeEvent(self, event):
+        # Any way of dismissing without rating (X, Escape, Maybe Later) -> postpone, don't block.
+        if not self._rated:
+            self.rating_manager.remind_later()
+        event.accept()
+# ─────────────────────────────────────────────────────────────────────────────
+
+
 class MainWindow(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
@@ -407,6 +587,22 @@ class MainWindow(QtWidgets.QWidget):
         self.stack.addWidget(self.mp4_window)
 
         root.addWidget(self.stack)
+
+        # ── Rating prompt wiring ───────────────────────────────
+        self.rating_manager = RatingManager()
+        self.mp3_window.download_succeeded.connect(self._on_download_succeeded)
+        self.mp4_window.download_succeeded.connect(self._on_download_succeeded)
+
+    def _on_download_succeeded(self):
+        """Called after every successful MP3 or MP4 download."""
+        should_prompt = self.rating_manager.record_download()
+        if should_prompt:
+            # Small delay so the "Done" status message is visible before the popup steals focus.
+            QtCore.QTimer.singleShot(600, self._show_rating_dialog)
+
+    def _show_rating_dialog(self):
+        dlg = RatingDialog(self.rating_manager, parent=self)
+        dlg.exec()
 
     def _on_ytdlp_updated(self, msg: str):
         if msg:

@@ -605,6 +605,8 @@ class PreviewWorker(QtCore.QThread):
 # MAIN APP WINDOW
 # ==========================
 class AppWindow(QtWidgets.QWidget):
+    download_succeeded = QtCore.pyqtSignal()  # emitted once per successful (non-cancelled) download
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("YouTube to MP3 Pro")
@@ -1110,6 +1112,8 @@ class AppWindow(QtWidgets.QWidget):
         self.lbl_status.setText(msg)
         self.btn_download.setEnabled(True)
         self.btn_cancel.setEnabled(False)
+        if "Cancelled" not in msg:
+            self.download_succeeded.emit()
         QtCore.QTimer.singleShot(5000, self.reset_ui)
 
     def _on_skipped(self, count):

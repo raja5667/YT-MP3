@@ -960,6 +960,7 @@ class VideoDownloadWorker(QtCore.QThread):
 # ==========================
 class VideoAppWindow(QtWidgets.QWidget):
     """Main window – trim panel is always visible; preview strip shows real frames."""
+    download_succeeded = QtCore.pyqtSignal()  # emitted once per successful (non-cancelled) download
 
     class _AlwaysTrueToggle(QtCore.QObject):
         """Dummy so main.py's trim_toggle references don't break."""
@@ -1506,6 +1507,8 @@ class VideoAppWindow(QtWidgets.QWidget):
         self.lbl_status.setText(f"✅  {msg}")
         self.btn_download.setEnabled(True)
         self.btn_cancel.setEnabled(False)
+        if "cancelled" not in msg.lower() and "stopped" not in msg.lower():
+            self.download_succeeded.emit()
         QtCore.QTimer.singleShot(6000, self._reset_ui)
 
     def _on_error(self, err):
