@@ -2,6 +2,8 @@ import os
 import sys
 import logging
 import subprocess
+import threading
+import time
 import urllib.request
 import urllib.error
 import json
@@ -36,7 +38,39 @@ APP_VERSION      = "v2.0.1"
 GITHUB_API_URL   = "https://api.github.com/repos/raja5667/YT-MP3/releases/latest"
 DOWNLOAD_PAGE    = "https://www.youtubemp3proh.dpdns.org/download.html"
 GITHUB_REPO_URL  = "https://github.com/raja5667/YT-MP3"
+
+# TODO: replace with your real Firebase Realtime Database URL once created
+# (Firebase console -> Build -> Realtime Database -> copy the URL shown at
+# the top, looks like "https://ytmp3-pro-xxxxx-default-rtdb.firebaseio.com").
+# Must match the RATINGS_DB_URL used in download.js on the website exactly.
+RATINGS_DB_URL   = "https://ytmp3-pro-default-rtdb.asia-southeast1.firebasedatabase.app"
 # ─────────────────────────────────────────────────────────────────────────────
+
+
+def _submit_rating_async(stars: int):
+    """
+    Fire-and-forget POST of the star rating to Firebase Realtime Database.
+
+    Runs on a background thread so a slow or offline connection never blocks
+    the rating dialog from closing. Any failure (no internet, DNS lookup
+    failure, Firebase down) is silently swallowed -- losing one submission
+    isn't worth interrupting the user over, and there's nothing useful to
+    show them if it fails anyway.
+    """
+    def _send():
+        try:
+            payload = json.dumps({"stars": stars, "ts": int(time.time())}).encode("utf-8")
+            req = urllib.request.Request(
+                f"{RATINGS_DB_URL}/ratings.json",
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            urllib.request.urlopen(req, timeout=5)
+        except Exception:
+            pass  # offline or Firebase unreachable -- drop silently
+
+    threading.Thread(target=_send, daemon=True).start()
 
 TAB_ACTIVE = """
     QPushButton {
@@ -495,6 +529,7 @@ class RatingDialog(QtWidgets.QDialog):
     def _on_rated(self, stars: int):
         self._rated = True
         self.rating_manager.mark_rated()
+        _submit_rating_async(stars)
         QtGui.QDesktopServices.openUrl(QtCore.QUrl(GITHUB_REPO_URL))
         self.accept()
 
