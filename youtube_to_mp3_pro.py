@@ -848,7 +848,7 @@ class AppWindow(QtWidgets.QWidget):
         footer.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
         contact_label = QLabel(
-            'If you face any error, <a href="https://raja5667.github.io/MONO/contact.html" style="color: #4285F4; text-decoration: none;">contact us</a>.'
+            'If you face any error, <a href="https://www.youtubemp3proh.dpdns.org/contact/" style="color: #4285F4; text-decoration: none;">contact us</a>.'
         )
         contact_label.setStyleSheet("color:#BDC1C6; font-size:12px;")
         contact_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
