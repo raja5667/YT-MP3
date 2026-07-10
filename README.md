@@ -36,6 +36,7 @@
 * **Modern UI/UX** – Neon animated interface with drag & drop URL support and live progress tracking.
 * **Thread-Safe Cancellation** – Instantly stops downloads without freezing the UI.
 * **Zero Configuration** – Bundled FFmpeg, VLC, Deno, and cookies; no system setup required for end users.
+* **In-App Rating Prompt** – Asks for a star rating after repeat downloads and feeds it into a live average shown on the [download page](https://www.youtubemp3proh.dpdns.org/download).
 
 ---
 
@@ -107,7 +108,17 @@ Before running or building, make sure these files are in the project root:
 * **`deno.exe`** — Download from [deno.land/releases](https://github.com/denoland/deno/releases) (`deno-x86_64-pc-windows-msvc.zip`)
 * **`cookies.txt`** — Export from YouTube while logged in using the [Get cookies.txt LOCALLY](https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc) Chrome extension
 
-### 6. Run Application
+### 6. Configure Rating Backend
+
+The in-app rating dialog submits stars to a Firebase Realtime Database so the average can be displayed on the website. In `main.py`, set:
+
+```python
+RATINGS_DB_URL = "https://YOUR-PROJECT-default-rtdb.<region>.firebasedatabase.app"
+```
+
+to your own Firebase project's database URL (Firebase console → **Build → Realtime Database**). The same URL must also be set as `RATINGS_DB_URL` in the website's `download.js`, or ratings submitted by the app won't show up on the site. See [Rating System](#-in-app-rating-system) below for the required database rules.
+
+### 7. Run Application
 
 ```bash
 python main.py
@@ -180,6 +191,34 @@ VLC is bundled inside the exe via `YTMP3-Pro.spec`. The app detects whether it i
 ### 🔇 Silent FFmpeg
 
 All FFmpeg subprocess calls use `CREATE_NO_WINDOW` and `STARTUPINFO` flags to suppress terminal windows during video trimming and thumbnail extraction.
+
+### ⭐ In-App Rating System
+
+After a set number of successful downloads (default: 5, tracked persistently via `QSettings`), the app shows a 5-star rating dialog. Tapping a star:
+
+1. Submits `{stars, ts}` to Firebase Realtime Database in a background thread — the UI never blocks on it, and a failed submit (e.g. no internet) is dropped silently rather than shown as an error
+2. Opens the GitHub repo so the user can also drop a repo star
+3. Marks the user as "already rated" locally, so the prompt never shows again on that machine
+
+The website's download page reads all submitted ratings, averages them, and renders a Play-Store-style badge (partial-filled stars + numeric average + rating count). Both sides must point at the same `RATINGS_DB_URL` — see step 6 in Installation & Setup above.
+
+Required Firebase Realtime Database rules (restricts writes to valid 1–5 star values, leaves everything else locked):
+
+```json
+{
+  "rules": {
+    "ratings": {
+      ".read": true,
+      ".write": true,
+      "$rating_id": {
+        ".validate": "newData.hasChildren(['stars','ts']) && newData.child('stars').isNumber() && newData.child('stars').val() >= 1 && newData.child('stars').val() <= 5"
+      }
+    }
+  }
+}
+```
+
+> ⚠️ These rules allow anyone with the database URL to submit a rating directly via REST, not just through the app. That's an accepted tradeoff for a lightweight indie project — if abuse ever becomes a real problem, look into Firebase App Check or adding basic per-device rate limiting.
 
 ---
 
