@@ -36,7 +36,7 @@
 * **Modern UI/UX** – Neon animated interface with drag & drop URL support and live progress tracking.
 * **Thread-Safe Cancellation** – Instantly stops downloads without freezing the UI.
 * **Zero Configuration** – Bundled FFmpeg, VLC, Deno, and cookies; no system setup required for end users.
-* **In-App Rating Prompt** – Asks for a star rating after repeat downloads and feeds it into a live average shown on the [download page](https://www.youtubemp3proh.dpdns.org/download).
+* **In-App Rating Prompt** – Asks for a star rating after repeat downloads and feeds it into a live average shown on the [download page](https://www.getdownloadaid.com/download).
 
 ---
 

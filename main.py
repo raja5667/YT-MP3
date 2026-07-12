@@ -36,7 +36,7 @@ from youtube_to_mp4_pro  import VideoAppWindow as MP4Window
 # ── App version ──────────────────────────────────────────────────────────────
 APP_VERSION      = "v2.1.0"
 GITHUB_API_URL   = "https://api.github.com/repos/raja5667/YT-MP3/releases/latest"
-DOWNLOAD_PAGE    = "https://www.youtubemp3proh.dpdns.org/download.html"
+DOWNLOAD_PAGE    = "https://www.getdownloadaid.com/download.html"
 GITHUB_REPO_URL  = "https://github.com/raja5667/YT-MP3"
 
 # TODO: replace with your real Firebase Realtime Database URL once created

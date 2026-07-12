@@ -1228,7 +1228,7 @@ class VideoAppWindow(QtWidgets.QWidget):
         footer.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         contact_label = QLabel(
-            'If you face any error, <a href="https://www.youtubemp3proh.dpdns.org/contact/" '
+            'If you face any error, <a href="https://www.getdownloadaid.com/contact/" '
             'style="color:#4285F4; text-decoration:none;">contact us</a>.'
         )
         contact_label.setStyleSheet("color:#BDC1C6; font-size:11px;")
