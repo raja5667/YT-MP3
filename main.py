@@ -28,6 +28,7 @@ if hasattr(os, "add_dll_directory") and os.path.isdir(vlc_path):
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 from PyQt6.QtCore import Qt
+from PyQt6.QtNetwork import QLocalServer, QLocalSocket
 
 # Import both windows (VLC setup already done above)
 from youtube_to_mp3_pro import AppWindow as MP3Window, resource_path, ICON_PATH
@@ -341,8 +342,8 @@ class UpdateDialog(QtWidgets.QDialog):
         QtWidgets.QMessageBox.information(
             self,
             "Download Complete",
-            f"✅  New version saved to:\n{save_path}\n\n"
-            f"Close YTMP3-Pro and replace the old .exe with this new file to complete the update."
+            f"✅  Update installer saved to:\n{save_path}\n\n"
+            f"Close YTMP3-Pro and run this installer to complete the update."
         )
         self.accept()
 
@@ -704,7 +705,37 @@ def main():
     app.setWindowIcon(QtGui.QIcon(ICON_PATH))
     app.setFont(QtGui.QFont("Segoe UI", 10))
 
+    # --- Single-instance guard ---
+    # If another instance of YTMP3-Pro is already running, tell it to
+    # bring itself to the front and exit this new instance immediately.
+    SERVER_NAME = "YTMP3Pro-SingleInstance"
+
+    socket = QLocalSocket()
+    socket.connectToServer(SERVER_NAME)
+    if socket.waitForConnected(200):
+        # Another instance is already running — signal it and quit.
+        socket.write(b"show")
+        socket.waitForBytesWritten(200)
+        socket.disconnectFromServer()
+        sys.exit(0)
+
+    # No instance running yet — become the server for this session.
+    QLocalServer.removeServer(SERVER_NAME)  # clean up any stale socket
+    local_server = QLocalServer()
+    local_server.listen(SERVER_NAME)
+
     win = MainWindow()
+
+    def _bring_to_front():
+        conn = local_server.nextPendingConnection()
+        if conn:
+            conn.readAll()
+        win.showNormal()
+        win.raise_()
+        win.activateWindow()
+
+    local_server.newConnection.connect(_bring_to_front)
+
     win.show()
     sys.exit(app.exec())
 

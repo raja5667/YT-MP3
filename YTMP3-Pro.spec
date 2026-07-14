@@ -87,24 +87,30 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
+    exclude_binaries=True,      # ← required for onedir mode
     name='YTMP3-Pro',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
-    upx_exclude=[
-        'libvlc.dll',
-        'libvlccore.dll',
-    ],
-    runtime_tmpdir=None,
+    upx=False,                  # ← disabled: was triggering AV heuristics
     console=False,              # No terminal window for users
     disable_windowed_traceback=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
     icon='app_icon.ico',
-    onefile=True,               # Single .exe output
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=False,                  # ← disabled here too
+    upx_exclude=[
+        'libvlc.dll',
+        'libvlccore.dll',
+    ],
+    name='YTMP3-Pro',           # → output folder: dist/YTMP3-Pro/
 )

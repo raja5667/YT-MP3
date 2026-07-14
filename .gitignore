@@ -3,4 +3,5 @@ __pycache__/
 *.pyc
 build/
 dist/
-youtube_to_mp3.log
+Output/
+*.log
