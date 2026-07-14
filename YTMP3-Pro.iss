@@ -27,7 +27,7 @@ DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 ; Not code-signed, so let Windows show the standard install prompt
 OutputDir=Output
-OutputBaseFilename=YTMP3-Pro-Setup-{#MyAppVersion}
+OutputBaseFilename=YTMP3-Pro-Setup
 SetupIconFile=app_icon.ico
 Compression=lzma2
 SolidCompression=yes
@@ -37,11 +37,11 @@ UninstallDisplayIcon={app}\{#MyAppExeName}
 ; Allow both per-user and per-machine installs (avoids needing admin every time)
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
-; Auto-close the running app if it's open (so files aren't locked during update),
-; and relaunch it automatically after install finishes.
+; Auto-close the running app if it's open (so files aren't locked during update).
+; Relaunch is handled by the [Run] section below, not here, to avoid
+; opening two instances of the app after an update.
 CloseApplications=yes
 CloseApplicationsFilter={#MyAppExeName}
-RestartApplications=yes
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
