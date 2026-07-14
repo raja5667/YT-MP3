@@ -37,7 +37,8 @@
 * **Thread-Safe Cancellation** – Instantly stops downloads without freezing the UI.
 * **Zero Configuration** – Bundled FFmpeg, VLC, Deno, and cookies; no system setup required for end users.
 * **In-App Rating Prompt** – Asks for a star rating after repeat downloads and feeds it into a live average shown on the [download page](https://www.getdownloadaid.com/download).
-* **Windows Installer** – Distributed as a proper Inno Setup installer alongside the portable exe, with Start Menu shortcuts and clean uninstall support.
+* **Windows Installer** – Distributed as a proper Inno Setup installer with Start Menu shortcuts, an "Add or Remove Programs" entry, and clean uninstall support.
+* **Single-Instance Enforcement** – Launching the app while it's already running just brings the existing window to the front instead of opening a duplicate.
 
 ---
 
@@ -63,8 +64,9 @@ YT-MP3/
 ├── deno.exe                # JavaScript runtime for YouTube challenge solving
 ├── cookies.txt             # YouTube authentication cookies (Netscape format)
 ├── VLC/                    # Bundled VLC engine (libvlc.dll + plugins/)
-├── YTMP3-Pro.spec          # PyInstaller build configuration
+├── YTMP3-Pro.spec          # PyInstaller build configuration (onedir)
 ├── YTMP3-Pro.iss           # Inno Setup installer script
+├── build_release.ps1       # One-command release build (PyInstaller + Inno Setup)
 ├── requirements.txt        # Python dependencies
 ├── app_icon.ico            # App icon asset
 ├── .gitignore              # Git exclusions
@@ -128,9 +130,9 @@ python main.py
 
 ---
 
-## 📦 Build Standalone EXE (PyInstaller)
+## 📦 Build the App (PyInstaller — onedir)
 
-This project uses a `.spec` file to bundle VLC, FFmpeg, Deno, EJS scripts, cookies, and all dependencies into a **single portable `.exe`** — no installation required for end users.
+This project uses a `.spec` file to bundle VLC, FFmpeg, Deno, EJS scripts, cookies, and all dependencies into a **folder build** (`onedir` mode, not `onefile`). Onedir avoids the self-extracting-archive behavior that triggers false-positive malware flags on single-file exes, and it also starts faster since nothing has to be unpacked to a temp folder on every launch.
 
 ### Prerequisites
 
@@ -140,7 +142,7 @@ pip install "yt-dlp[default]"
 pip install yt-dlp-ejs==0.8.0
 ```
 
-### Build Executable
+### Build
 
 ```bash
 pyinstaller YTMP3-Pro.spec
@@ -149,41 +151,51 @@ pyinstaller YTMP3-Pro.spec
 📁 Output will be at:
 
 ```
-dist/YTMP3-Pro.exe
+dist/YTMP3-Pro/
+├── YTMP3-Pro.exe     # launcher — needs the rest of this folder next to it
+└── _internal/        # Python runtime, VLC, FFmpeg, Deno, yt-dlp, etc.
 ```
 
-> ✅ The output `.exe` is fully self-contained. Share only `dist/YTMP3-Pro.exe` — users do **not** need Python, VLC, FFmpeg, or Deno installed.
+> ⚠️ This folder is **not** meant to be handed to end users directly — it must be packaged into the installer (next section) before distribution. `YTMP3-Pro.exe` alone will not run without `_internal/` next to it.
 
-> ⚠️ Expected file size is **150–250 MB** due to bundled VLC plugins and Deno runtime. This is normal.
+> ⚠️ Expected total folder size is **150–250 MB** due to bundled VLC plugins and Deno runtime. This is normal.
 
-> 🍪 **Cookies Notice:** The bundled `cookies.txt` is your personal YouTube session. It expires over time (typically months). When quality degrades or errors appear, re-export a fresh `cookies.txt` and rebuild the EXE.
+> 🍪 **Cookies Notice:** The bundled `cookies.txt` is your personal YouTube session. It expires over time (typically months). When quality degrades or errors appear, re-export a fresh `cookies.txt` and rebuild.
 
 ---
 
-## 💿 Build Windows Installer (Inno Setup)
+## 💿 Build the Installer (Inno Setup)
 
-On top of the portable PyInstaller exe, releases also ship a proper Windows installer built with [Inno Setup](https://jrsoftware.org/isinfo.php). This adds Start Menu shortcuts, an entry in "Add or Remove Programs," and a clean uninstaller — useful for users who prefer a normal install flow over a standalone exe.
+The onedir build above is packaged into a single Windows installer using [Inno Setup](https://jrsoftware.org/isinfo.php). This is the **only file distributed to end users** — it installs to Program Files (or per-user AppData if installing without admin rights), adds Start Menu / Desktop shortcuts, registers in "Add or Remove Programs," and includes a clean uninstaller.
 
 ### Prerequisites
 
 * [Inno Setup](https://jrsoftware.org/isdl.php) installed
-* A completed PyInstaller build (`dist/YTMP3-Pro.exe` must already exist — build that first)
+* A completed PyInstaller build (`dist/YTMP3-Pro/` must already exist — build that first)
 
 ### Build the Installer
 
-Open `YTMP3-Pro.iss` in the Inno Setup Compiler (or run it via the `ISCC.exe` command line) and compile:
-
-```bash
-ISCC YTMP3-Pro.iss
+```powershell
+& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" YTMP3-Pro.iss
 ```
 
 📁 Output installer will be at:
 
 ```
-dist_installer/YTMP3-Pro-Setup.exe
+Output/YTMP3-Pro-Setup-<version>.exe
 ```
 
-> ✅ When publishing a GitHub release, upload **both** `dist/YTMP3-Pro.exe` (portable) and `dist_installer/YTMP3-Pro-Setup.exe` (installer) as release assets, so users can choose either option. The website's download page currently grabs whichever `.exe` asset appears first in the release — if you want the installer to be the primary download, list it first when uploading assets.
+### One-Command Release Build
+
+`build_release.ps1` runs both steps above in order (cleans old `build`/`dist`, runs PyInstaller, then ISCC):
+
+```powershell
+.\build_release.ps1
+```
+
+> ✅ Upload only `Output/YTMP3-Pro-Setup-<version>.exe` as the GitHub release asset — that's the single file users download from getdownloadaid.com. The in-app updater (see below) expects the release's `.exe` asset to be this installer, not a raw portable exe.
+
+> 🔒 **Not code-signed.** Windows SmartScreen may show an "Unknown publisher" warning on first downloads until the file builds enough reputation from download volume over time. This is separate from antivirus detections and isn't fixable without a paid code-signing certificate.
 
 ---
 
@@ -212,6 +224,14 @@ Audio boost is applied via FFmpeg on a duplicated output stream to prevent corru
 ### 🧵 Thread Safety System
 
 All downloads run asynchronously with safe interruption handling to prevent UI freezing or crashes.
+
+### 🪟 Single-Instance Enforcement
+
+On launch, the app checks for an existing instance via a local socket (`QLocalServer`/`QLocalSocket`, socket name `YTMP3Pro-SingleInstance`). If one is already running, the new launch just signals it to come to the front (`showNormal` / `raise_` / `activateWindow`) and exits, so users never end up with two windows open at once — including right after an installer update closes and would otherwise leave a stale window behind.
+
+### 🔄 Auto-Update Flow
+
+The in-app updater checks GitHub Releases for a newer version, and if found, downloads the release's `.exe` asset (the Inno Setup installer, per the build process above) to the user's Downloads folder. It does **not** attempt to self-replace the running exe — the user closes the app and runs the downloaded installer, which detects the existing install (same Inno Setup `AppId`) and updates it in place, preserving shortcuts and the "Add or Remove Programs" entry.
 
 ### 📦 VLC Bundling
 
@@ -259,7 +279,7 @@ YouTube cookies expire. If the app starts returning fewer quality options or err
 2. Click the **Get cookies.txt LOCALLY** extension
 3. Export cookies for `youtube.com`
 4. Replace `cookies.txt` in the project folder
-5. Rebuild: `pyinstaller YTMP3-Pro.spec`
+5. Rebuild: `.\build_release.ps1` (or run the PyInstaller + ISCC steps separately — see [Build the App](#-build-the-app-pyinstaller--onedir))
 
 ---
 
