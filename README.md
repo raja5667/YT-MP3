@@ -37,6 +37,7 @@
 * **Thread-Safe Cancellation** – Instantly stops downloads without freezing the UI.
 * **Zero Configuration** – Bundled FFmpeg, VLC, Deno, and cookies; no system setup required for end users.
 * **In-App Rating Prompt** – Asks for a star rating after repeat downloads and feeds it into a live average shown on the [download page](https://www.getdownloadaid.com/download).
+* **Windows Installer** – Distributed as a proper Inno Setup installer alongside the portable exe, with Start Menu shortcuts and clean uninstall support.
 
 ---
 
@@ -63,6 +64,7 @@ YT-MP3/
 ├── cookies.txt             # YouTube authentication cookies (Netscape format)
 ├── VLC/                    # Bundled VLC engine (libvlc.dll + plugins/)
 ├── YTMP3-Pro.spec          # PyInstaller build configuration
+├── YTMP3-Pro.iss           # Inno Setup installer script
 ├── requirements.txt        # Python dependencies
 ├── app_icon.ico            # App icon asset
 ├── .gitignore              # Git exclusions
@@ -155,6 +157,33 @@ dist/YTMP3-Pro.exe
 > ⚠️ Expected file size is **150–250 MB** due to bundled VLC plugins and Deno runtime. This is normal.
 
 > 🍪 **Cookies Notice:** The bundled `cookies.txt` is your personal YouTube session. It expires over time (typically months). When quality degrades or errors appear, re-export a fresh `cookies.txt` and rebuild the EXE.
+
+---
+
+## 💿 Build Windows Installer (Inno Setup)
+
+On top of the portable PyInstaller exe, releases also ship a proper Windows installer built with [Inno Setup](https://jrsoftware.org/isinfo.php). This adds Start Menu shortcuts, an entry in "Add or Remove Programs," and a clean uninstaller — useful for users who prefer a normal install flow over a standalone exe.
+
+### Prerequisites
+
+* [Inno Setup](https://jrsoftware.org/isdl.php) installed
+* A completed PyInstaller build (`dist/YTMP3-Pro.exe` must already exist — build that first)
+
+### Build the Installer
+
+Open `YTMP3-Pro.iss` in the Inno Setup Compiler (or run it via the `ISCC.exe` command line) and compile:
+
+```bash
+ISCC YTMP3-Pro.iss
+```
+
+📁 Output installer will be at:
+
+```
+dist_installer/YTMP3-Pro-Setup.exe
+```
+
+> ✅ When publishing a GitHub release, upload **both** `dist/YTMP3-Pro.exe` (portable) and `dist_installer/YTMP3-Pro-Setup.exe` (installer) as release assets, so users can choose either option. The website's download page currently grabs whichever `.exe` asset appears first in the release — if you want the installer to be the primary download, list it first when uploading assets.
 
 ---
 
